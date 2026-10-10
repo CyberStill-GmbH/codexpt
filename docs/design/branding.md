@@ -27,4 +27,4 @@ ChatGPT generated this reference after César requested a panda combined with a 
 
 ## Review evidence
 
-The second visual review used synthetic Playwright screenshots at 1280 px desktop and 390 px mobile. The visual direction was approved, but release was not approved; the findings above must be verified in the updated captures and authenticated-flow tests.
+Current synthetic Playwright captures are published in this folder: `dashboard-desktop.png`, `dashboard-mobile.png`, and `login-desktop.png`. The dashboard data is synthetic and its local actor labels are unverified. Screenshots validate layout only; they do not approve a release or prove live identity-provider behavior.

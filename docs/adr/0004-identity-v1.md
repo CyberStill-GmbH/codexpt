@@ -1,12 +1,12 @@
 # ADR-0004: Identity and workspace authorization boundary
 
-- **Status:** Accepted for an invite-only hosted beta prototype; implementation partially present, not release-ready
+- **Status:** Identity boundary accepted for an invite-only hosted beta prototype; implementation partially present, not release-ready. The original split-host deployment sketch is superseded by [ADR-0011](0011-same-origin-railway-beta.md).
 - **Date:** 2026-10-10
 - **Decision owners:** César (product director); Codex, with delegated ChatGPT review
 
 ## Context
 
-The `v0.1.0-local-mvp` is a single-user local tool. Its actor labels are declarations; they do not establish identity. The local server must remain usable without accounts or internet. A later hosted beta needs authenticated users, workspace isolation, revocable sessions, and approvals attributable to a verified human. The intended hosting split is Vercel at `codexpt.jappi.net.pe` and a Rust API at `api.codexpt.jappi.net.pe`.
+The `v0.1.0-local-mvp` is a single-user local tool. Its actor labels are declarations; they do not establish identity. The local server must remain usable without accounts or internet. A later hosted beta needs authenticated users, workspace isolation, revocable sessions, and approvals attributable to a verified human. The initial Vercel + Rust API split (`codexpt.jappi.net.pe` and `api.codexpt.jappi.net.pe`) was a proposal; the active beta topology is one Railway service with one same-origin hostname.
 
 Authentication must not be spread across React components, HTTP handlers, and the existing protocol core. A user must never select `human:cesar` or a role in a request body to gain authority.
 
@@ -37,6 +37,8 @@ Provider pricing changes. Re-check the linked official pages, applicable AWS org
 
 ## Browser and API flow
 
+The following sequence diagram records the original split-host proposal and is retained as design history. For the active same-origin flow and exact domain mapping, see [ADR-0011](0011-same-origin-railway-beta.md) and the [deployment plan](../deployment/PLAN.md).
+
 ```mermaid
 sequenceDiagram
     actor User
@@ -60,7 +62,7 @@ sequenceDiagram
     API-->>UI: Safe profile + server-derived role/capabilities (no provider tokens)
 ```
 
-Because the browser calls the API across origins, API CORS must allow exactly `https://codexpt.jappi.net.pe`, `Access-Control-Allow-Credentials: true`, and only required methods/headers. Never use wildcard origins with credentials. Require the CSRF header and exact `Origin` on writes; reject unexpected `Host`, content types, and redirects. The API cookie remains host-only and is not shared with Vercel or sibling subdomains.
+The historical split-host design would require exact credentialed CORS and a host-only API cookie. Under the active same-origin topology, keep the host-only cookie and CSRF/Host/Origin checks; browser/API requests share the same origin and need no cross-origin credentialed CORS.
 
 ## Data model and module boundary
 

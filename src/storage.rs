@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::domain::{AppError, HumanDecision, Message, MessageStatus, Task, TaskEvent, TaskStatus};
 
-const CURRENT_SCHEMA_VERSION: i64 = 3;
+const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 pub struct Store {
     connection: Connection,
@@ -900,6 +900,14 @@ fn migrate(connection: &mut Connection) -> Result<(), AppError> {
         transaction.pragma_update(None, "user_version", 3)?;
         transaction.commit()?;
     }
+    if version < 4 {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "CREATE INDEX IF NOT EXISTS task_events_task_order ON task_events(task_id, sequence);",
+        )?;
+        transaction.pragma_update(None, "user_version", 4)?;
+        transaction.commit()?;
+    }
     Ok(())
 }
 
@@ -1533,7 +1541,28 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn task_event_history_uses_workspace_task_order_index() {
+        let path = db_path();
+        let store = Store::open(&path).unwrap();
+        let plan: String = store
+            .connection
+            .query_row(
+                "EXPLAIN QUERY PLAN
+                 SELECT sequence, task_id, event_type, actor, correlation_id, details_json, occurred_at
+                 FROM task_events WHERE task_id = 'task-1' ORDER BY sequence ASC",
+                [],
+                |row| row.get(3),
+            )
+            .unwrap();
+
+        assert!(
+            plan.contains("task_events_task_order"),
+            "query plan: {plan}"
+        );
     }
 
     #[test]

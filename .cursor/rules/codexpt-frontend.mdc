@@ -1,0 +1,15 @@
+---
+description: CodeXPT interface implementation rules for web frontend files
+globs: web/src/**/*.tsx, web/src/**/*.css, web/e2e/**/*.spec.ts
+alwaysApply: false
+---
+
+For CodeXPT UI work, first follow [the CodeXPT frontend skill](../../.agents/skills/codexpt-frontend-design/SKILL.md), [the shared product design](../../DESIGN.md), the relevant `design-system/codexpt/pages/*.md` override, and [the component review procedure](../../docs/design/FRONTEND-REVIEW.md).
+
+- Preserve the dashboard's audit-first visual direction. Keep route-specific visual changes scoped to that route.
+- Keep login connected to backend OIDC status and `/api/auth/login`; never add a local authentication bypass or claim the user is signed in before the backend confirms it.
+- Do not collect provider passwords or put credentials/tokens into browser storage, URL fragments, or rendered errors.
+- Use bundled assets and fonts, semantic HTML, visible focus, reduced-motion behavior, and responsive layouts. Avoid generic gradients, glow effects, decorative cards, and fake product activity.
+- Use named imports from `@tabler/icons-react` for interface icons with consistent sizing/stroke. Keep the panda as a custom brand SVG; do not mix general icon families.
+- Apply the same review discipline to navigation, timeline, composer, decisions, lifecycle actions, annotations, invites, dialogs, and empty/error states—not just login.
+- Update behavior and accessibility tests for changed flows; inspect responsive captures when changing page composition.

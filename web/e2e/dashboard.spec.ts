@@ -22,12 +22,20 @@ test('login and invite screens: responsive empty identity states are accessible'
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
 
-  for (const [width, height, suffix] of [[390, 844, 'mobile'], [1280, 900, 'desktop']] as const) {
+  for (const [width, height, suffix] of [[390, 844, 'mobile'], [768, 1024, 'tablet'], [1280, 900, 'desktop']] as const) {
     await page.setViewportSize({ width, height })
     await page.goto('/login')
-    await expect(page.getByRole('heading', { name: /Las buenas decisiones se revisan en equipo/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Iniciar sesión' })).toBeVisible()
     await expect(page.locator('.login-button')).toHaveAttribute('aria-disabled', 'true')
-    await expect(page.getByText('La conexión de identidad se habilitará al completar la configuración del entorno.')).toBeVisible()
+    await expect(page.locator('.login-button')).toBeDisabled()
+    await expect(page.getByText('La conexión de identidad estará disponible cuando termine la configuración del entorno.')).toBeVisible()
+    const illustration = page.locator('.login-art-image')
+    if (width <= 960) {
+      await expect(illustration).toBeHidden()
+    } else {
+      await expect(illustration).toBeVisible()
+      await expect.poll(() => illustration.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+    }
     await expectAccessibleCapture(page, `login-${suffix}.png`)
 
     await page.goto('/invite')
@@ -38,7 +46,7 @@ test('login and invite screens: responsive empty identity states are accessible'
   }
 
   expect(pageErrors).toEqual([])
-})
+}, 90_000)
 
 test('configured OpenAI OIDC shows ChatGPT sign-in and keeps CodeXPT roles explicit', async ({ page }) => {
   await page.route('**/api/auth/status', (route) => route.fulfill({ json: { configured: true, provider: 'ChatGPT' } }))

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, CircleDot, Clock3, FileText, LockKeyhole, LogOut, Plus, Search, Send, ShieldAlert, ShieldCheck, Sparkles, UserRoundX, Users } from 'lucide-react'
+import { IconArrowDownLeft as ArrowDownLeft, IconArrowUpRight as ArrowUpRight, IconCheck as Check, IconChevronDown as ChevronDown, IconCircleDot as CircleDot, IconClock as Clock3, IconFileText as FileText, IconLock as LockKeyhole, IconLogout as LogOut, IconPlus as Plus, IconSearch as Search, IconSend as Send, IconShieldExclamation as ShieldAlert, IconShieldCheck as ShieldCheck, IconSparkles as Sparkles, IconUserX as UserRoundX, IconUsers as Users } from '@tabler/icons-react'
+import loginCollaborationImage from './assets/login/login-collaboration.webp'
 import './App.css'
 
 type Status = 'open' | 'proposed' | 'under_review' | 'resolved' | 'approved'
@@ -106,32 +107,25 @@ function Login() {
     return () => { active = false }
   }, [])
 
+  const providerLabel = /cognito/i.test(provider) ? 'Cognito' : provider === 'ChatGPT' ? 'ChatGPT' : 'inicio seguro'
+
   return <main className="login-shell">
     <section className="login-card" aria-labelledby="login-title">
-      <a className="brand login-brand" href="/" aria-label="CodeXPT inicio"><BrandMark /><span className="brand-word">CodeXPT<span> / workspace</span></span></a>
-      <div className="login-rule" />
-      <p className="login-eyebrow"><span className="login-dot" /> COLABORACIÓN TÉCNICA AUDITABLE</p>
-      <h1 id="login-title">Las buenas decisiones<br />se revisan en equipo.</h1>
-      <p className="login-copy">Un espacio claro para propuestas, revisión entre agentes y decisiones humanas con evidencia.</p>
+      <a className="brand login-brand" href="/" aria-label="CodeXPT inicio"><BrandMark /><span className="brand-word">CodeXPT</span></a>
+      <h1 id="login-title">Iniciar sesión</h1>
+      <p className="login-copy">Accede a tus revisiones y espacios de trabajo.</p>
       <div className="login-auth">
-        {signedIn ? <a className="primary-button login-button" href="/">Ir al workspace <ArrowUpRight size={16} /></a> : <a className={`primary-button login-button ${configured === false ? 'disabled' : ''}`} href={configured ? `${API_BASE}/api/auth/login` : undefined} aria-disabled={!configured}>
-          <LockKeyhole size={15} /> Continuar con {provider === 'ChatGPT' ? 'ChatGPT' : 'inicio seguro'} <ArrowUpRight size={15} />
-        </a>}
-        <p className="login-provider">{configured === null ? 'Comprobando conexión de identidad…' : configured ? provider === 'ChatGPT' ? 'OpenAI verifica tu identidad; CodeXPT administra tus permisos y workspace.' : `Identidad verificada por ${provider} · permisos administrados por CodeXPT.` : 'La conexión de identidad se habilitará al completar la configuración del entorno.'}</p>
-        <a className="login-invite-link" href="/invite">¿Tienes una invitación? Aceptarla</a>
+        {signedIn ? <a className="primary-button login-button" href="/">Ir al workspace <ArrowUpRight size={16} /></a> : configured === true ? <a className="primary-button login-button" href={`${API_BASE}/api/auth/login`}>
+          <LockKeyhole size={15} /> Continuar con {providerLabel} <ArrowUpRight size={15} />
+        </a> : <button className="primary-button login-button disabled" type="button" disabled aria-disabled="true">
+          <LockKeyhole size={15} /> Continuar con {providerLabel}
+        </button>}
+        <p className="login-provider">{configured === null ? 'Comprobando conexión de identidad…' : configured ? providerLabel === 'ChatGPT' ? 'OpenAI verifica tu identidad; CodeXPT administra tus permisos y workspace.' : `Tu identidad se verifica con ${providerLabel}; CodeXPT administra el acceso al workspace.` : 'La conexión de identidad estará disponible cuando termine la configuración del entorno.'}</p>
+        <a className="login-invite-link" href="/invite">¿Tienes una invitación? Acepta el código</a>
       </div>
-      <div className="login-foot"><ShieldCheck size={15} /><span>Acceso privado, decisiones trazables y roles por workspace.</span></div>
     </section>
-    <aside className="login-aside" aria-label="Principios de CodeXPT">
-      <div className="aside-top"><span>CODEXPT / PRINCIPIOS</span><span>01 — 03</span></div>
-      <div className="aside-content">
-        <p className="aside-index">01 / PROPUESTA</p><h2>Las ideas empiezan<br />con evidencia.</h2>
-        <div className="aside-line" />
-        <p className="aside-index">02 / REVISIÓN</p><h2>El desacuerdo<br />también construye.</h2>
-        <div className="aside-line" />
-        <p className="aside-index">03 / DECISIÓN</p><h2>La aprobación<br />siempre es humana.</h2>
-      </div>
-      <div className="aside-bottom"><span>Hecho para pensar en conjunto.</span><span>v0.2 · identity</span></div>
+    <aside className="login-aside login-art" aria-label="Dos perspectivas colaboran en una decisión humana">
+      <img className="login-art-image" src={loginCollaborationImage} alt="Un panda al centro recibe dos trayectorias de colaboración, una azul y otra terracota, que convergen en un punto de decisión." />
     </aside>
   </main>
 }

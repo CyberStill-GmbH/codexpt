@@ -1,6 +1,6 @@
 # Identity v1 threat model (implementation review)
 
-**Status:** design controls are partially implemented and locally tested; this is not a security certification or release approval. **Scope:** OIDC login, browser session, workspace membership/RBAC, review data, and human approvals across a Vercel UI and Rust API. Local mode remains a separate OS-user trust boundary. Task storage remains rusqlite; a controlled local provider callback test now exists, but neither Cognito nor OpenAI has been tested live and the hosted browser flow is untested. The authorization acceptance plan lists outstanding gates. Do not expose this branch to public traffic yet.
+**Status:** design controls are partially implemented and locally tested; this is not a security certification or release approval. **Scope:** OIDC login, browser session, workspace membership/RBAC, review data, and human approvals served from one Railway HTTPS origin by the Rust/Axum service, with the frontend embedded in that service. Local mode remains a separate OS-user trust boundary. Task storage remains rusqlite; a controlled local provider callback test now exists, but neither Cognito nor OpenAI has been tested live and the hosted browser flow is untested. The authorization acceptance plan lists outstanding gates. The active domain plan uses `codexpt.jappi.net.pe` for UI and API paths; it does not use an `api.` subdomain. Do not expose this branch to public traffic yet.
 
 ## Assets
 
@@ -12,7 +12,7 @@
 ## Trust boundaries and actors
 
 - Browser and all client-supplied headers/body/query values are untrusted.
-- Vercel static frontend is public and cannot hold provider secrets or enforce authorization.
+- The browser and all client-supplied headers/body/query values are untrusted; frontend code cannot hold provider secrets or enforce authorization.
 - Rust API plus its SQLx database are the authorization authority.
 - The selected OIDC provider is the credential/identity authority; a valid authentication does not imply CodeXPT workspace access.
 - Human user with `OWNER`, `EDITOR`, or `VIEWER` membership; an unprovisioned authenticated identity; a malicious authenticated user; cross-site attacker; network attacker; compromised browser/XSS; database/log reader; operator with AWS access.
@@ -29,7 +29,7 @@
 | Open redirect / SSRF | Attacker supplies callback, issuer discovery URL, JWKS redirect or `return_to` | Configure trusted issuer/callback; exact redirect allowlist; no user-controlled discovery URLs; HTTP client must not follow redirects for OIDC metadata/JWKS; fixed post-login redirect. |
 | JWT confusion/forgery | Accept wrong issuer, client, algorithm, expired token or forged key | Validate signature/JWKS, exact `iss`, audience/client, nonce, time claims and explicit algorithm allowlist with maintained library; test wrong claims/key rollover/expiry. |
 | Session fixation/theft | Preserve pre-login session or steal/replay browser value | Rotate at authentication/privilege changes; 256-bit opaque id; hash at rest; host-only Secure HttpOnly cookie; server-side expiry/revocation; no tokens in JS/logs. |
-| CSRF / cross-origin API | Malicious site triggers credentialed mutation | Exact Origin/Host checks, credentialed CORS only for production UI, per-session CSRF token header, SameSite=Lax defense in depth, JSON-only mutation; test hostile/null/preview origins. |
+| CSRF / browser request forgery | Malicious site triggers a same-origin authenticated mutation | Exact Origin/Host checks, per-session CSRF token header, SameSite=Lax defense in depth, JSON-only mutation; test hostile/null/preview origins. |
 | IDOR / tenant escape | Substitute another workspace/task/decision id | Resolve membership and resource in the same scoped query/service; workspace id included in every child access and mutation; test user A cannot read/change any B resource. |
 | Vertical privilege escalation | Editor changes role or submits approval | Server-side action-role matrix; role changes only by Owner; final approval Owner only; membership changes and approval transact with audit event; test each denied transition. |
 | Role-claim confusion | A valid provider token contains a role/group claim that is stale or attacker-controlled | The provider proves identity only; CodeXPT SQLx membership is the authority for workspace roles; test provider claims cannot grant or change roles. |
@@ -62,6 +62,6 @@
 - Provider configuration/eligibility can drift; IaC and post-deploy configuration checks are needed before beta. OpenAI website OAuth stays disabled until the client is authorized and the callback is registered.
 - ChatGPT plan-use OAuth tokens are a distinct higher-value secret. They must remain in an OS credential vault in the future local connector; they must not be copied into hosted CodeXPT session tables, logs, or frontend storage.
 - SQLx SQLite/PostgreSQL query/migration parity needs its own tests; `workspace_id` omission is a recurring IDOR risk.
-- A compromised Vercel origin or XSS can perform actions as a logged-in user despite HttpOnly cookies; apply CSP/output encoding, narrow CORS, CSRF, and approval confirmation.
+- A compromised same-origin UI or XSS can perform actions as a logged-in user despite HttpOnly cookies; apply CSP/output encoding, CSRF, and approval confirmation. Same-origin removes credentialed cross-origin CORS but does not remove CSRF risk.
 - Email recovery, invitation delivery, support/admin override, owner loss, and deletion/retention policy remain unresolved; no public registration until specified.
 - The AWS/Vercel topology and total bill require a separate cloud-readiness ADR, threat review, budget estimate, and concrete Terraform plan before infrastructure changes.

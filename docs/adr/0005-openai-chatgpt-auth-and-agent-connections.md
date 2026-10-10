@@ -46,7 +46,7 @@ For the current single-provider deployment:
 identity_provider = "openai"
 openai_client_id  = <OpenAI-issued public client ID>
 oidc issuer       = https://auth.openai.com
-callback          = https://api.codexpt.jappi.net.pe/api/auth/callback
+callback          = https://codexpt.jappi.net.pe/api/auth/callback
 ```
 
 The callback must be registered exactly with OpenAI. `openai_client_id` is not a secret. The current callback implementation uses the system browser, server-side one-time transaction data, and PKCE. Do not apply Terraform until the OpenAI client is granted and the identity authorization tests pass. For the default Cognito deployment, the existing Cognito outputs and managed login remain available.

@@ -1,5 +1,7 @@
 # CodeXPT login design and implementation review
 
+The current visual direction is documented separately in [`docs/design/LOGIN-DESIGN.md`](../design/LOGIN-DESIGN.md). This document remains the identity and security contract; the visual guide must not weaken it.
+
 The branded login and invitation acceptance pages are implemented. The page must never suggest that access has succeeded before the Rust API verifies the OIDC callback. A controlled local OIDC provider exercises callback, PKCE, signature, nonce, state and replay checks. The configured issuer determines the provider label; the current code supports the OpenAI issuer as well as Cognito. Neither live provider login nor the hosted browser flow has been verified, so this is not release-ready.
 
 ## Brief
