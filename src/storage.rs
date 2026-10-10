@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::domain::{AppError, Message, MessageStatus, Task, TaskEvent, TaskStatus};
 
+const CURRENT_SCHEMA_VERSION: i64 = 1;
+
 pub struct Store {
     connection: Connection,
 }
@@ -20,10 +22,10 @@ impl Store {
                 AppError::InvalidInput(format!("cannot create database directory: {error}"))
             })?;
         }
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
-        connection.execute_batch(SCHEMA)?;
+        migrate(&mut connection)?;
         Ok(Self { connection })
     }
 
@@ -440,6 +442,23 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
+fn migrate(connection: &mut Connection) -> Result<(), AppError> {
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version > CURRENT_SCHEMA_VERSION {
+        return Err(AppError::InvalidInput(format!(
+            "database schema version {version} is newer than this binary supports ({CURRENT_SCHEMA_VERSION})"
+        )));
+    }
+
+    if version < 1 {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(SCHEMA)?;
+        transaction.pragma_update(None, "user_version", 1)?;
+        transaction.commit()?;
+    }
+    Ok(())
+}
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS tasks (
     task_id TEXT PRIMARY KEY,
@@ -668,6 +687,67 @@ mod tests {
     }
 
     #[test]
+    fn caller_can_spoof_human_actor_label_so_approval_is_not_authenticated() {
+        let path = db_path();
+        let mut store = Store::open(&path).unwrap();
+        let task = store
+            .create_task("identity boundary", "synthetic", "human:cesar")
+            .unwrap();
+        store
+            .transition_task(
+                &task.task_id,
+                TaskStatus::Open,
+                TaskStatus::Proposed,
+                "agent:codex",
+                "c1",
+            )
+            .unwrap();
+        store
+            .transition_task(
+                &task.task_id,
+                TaskStatus::Proposed,
+                TaskStatus::UnderReview,
+                "agent:chatgpt",
+                "c2",
+            )
+            .unwrap();
+        store
+            .transition_task(
+                &task.task_id,
+                TaskStatus::UnderReview,
+                TaskStatus::Resolved,
+                "agent:chatgpt",
+                "c3",
+            )
+            .unwrap();
+
+        // This expected limitation proves that the actor string is a claim, not an identity.
+        store
+            .transition_task(
+                &task.task_id,
+                TaskStatus::Resolved,
+                TaskStatus::Approved,
+                "human:cesar",
+                "c4",
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.get_task(&task.task_id).unwrap().unwrap().status,
+            TaskStatus::Approved
+        );
+        let approval = store
+            .list_events(&task.task_id)
+            .unwrap()
+            .into_iter()
+            .find(|event| {
+                event.event_type == "task_transitioned" && event.details["to"] == "approved"
+            })
+            .unwrap();
+        assert_eq!(approval.actor, "human:cesar");
+    }
+
+    #[test]
     fn dropped_transaction_rolls_back_all_writes() {
         let path = db_path();
         let mut store = Store::open(&path).unwrap();
@@ -804,5 +884,78 @@ mod tests {
             store.insert_message(&message),
             Err(AppError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn migration_preserves_existing_unversioned_database_and_sets_version() {
+        let path = db_path();
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection.execute_batch(SCHEMA).unwrap();
+            connection.execute(
+                "INSERT INTO tasks (task_id, title, description, status, created_at, updated_at)
+                 VALUES ('legacy-task', 'legacy', '', 'open', 't', 't')",
+                [],
+            ).unwrap();
+        }
+
+        let store = Store::open(&path).unwrap();
+        assert_eq!(
+            store.get_task("legacy-task").unwrap().unwrap().title,
+            "legacy"
+        );
+        let version: i64 = store
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn migration_rolls_back_schema_and_version_when_sql_fails() {
+        let path = db_path();
+        {
+            let connection = Connection::open(&path).unwrap();
+            // This incompatible object makes index creation fail after earlier DDL ran.
+            connection
+                .execute_batch("CREATE VIEW messages AS SELECT 1 AS message_id;")
+                .unwrap();
+        }
+
+        assert!(Store::open(&path).is_err());
+        let connection = Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 0);
+        let tasks_exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks')",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert!(!tasks_exists);
+    }
+
+    #[test]
+    fn database_from_newer_binary_is_rejected_without_modification() {
+        let path = db_path();
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION + 1)
+                .unwrap();
+        }
+        let error = match Store::open(&path) {
+            Ok(_) => panic!("newer schema should be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, AppError::InvalidInput(message) if message.contains("newer than this binary supports"))
+        );
+        let connection = Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION + 1);
     }
 }

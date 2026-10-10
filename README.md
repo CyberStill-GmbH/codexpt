@@ -1,17 +1,23 @@
 # CodeXPT
 
-Fase 1 del PoC para intercambiar propuestas estructuradas y decisiones auditables entre sesiones de agentes. Esta versión es una CLI local en Rust con SQLite: no tiene interfaz web, servidor HTTP, MCP, conexión a modelos ni acceso a otros repositorios.
+Workspace local para registrar propuestas, revisiones, evidencia y decisiones humanas con un historial auditable. El core es Rust + SQLite; el dashboard local de React/TypeScript se sirve desde Rust y no depende de infraestructura hospedada.
 
 ## Requisitos
 
 - Rust estable con Cargo.
+- Node.js LTS + npm para construir el dashboard desde `web/`.
 
 ## Uso
 
 ```powershell
 cargo run -- init
 cargo run -- task create --title "Revisar propuesta" --description "Tarea de ejemplo"
+npm --prefix web ci
+npm --prefix web run build
+cargo run -- serve
 ```
+
+El dashboard queda en `http://127.0.0.1:4173`. El servidor solo escucha en loopback. Deténlo con `Ctrl+C` al terminar. Para instrucciones, seguridad y recuperación, consulta [`docs/OPERATIONS.md`](docs/OPERATIONS.md) y [`docs/SECURITY.md`](docs/SECURITY.md).
 
 La CLI imprime JSON. Copia el `task_id` y úsalo en los siguientes comandos:
 
@@ -42,11 +48,15 @@ Por defecto la base queda en `.codexpt/state.sqlite3`. El archivo está ignorado
 
 ## Límites de Fase 1
 
-El PoC valida esquema, transiciones, atomicidad, idempotencia, recuperación e historial. No demuestra que conecte sesiones ni que reduzca el tiempo humano: sin una integración de transporte, los mensajes siguen siendo ingresados por la persona. La evaluación comparativa de 12 tareas pertenece a una fase posterior.
+El MVP local valida esquema, transiciones, atomicidad, idempotencia, recuperación e historial y permite operar esas funciones desde el dashboard. No conecta automáticamente sesiones ni demuestra que reduzca el tiempo humano: los mensajes de otros agentes siguen siendo ingresados por una persona. La evaluación comparativa de 12 tareas pertenece a una fase posterior.
 
 ## Validación local
 
 ```powershell
 cargo test
 cargo clippy --all-targets -- -D warnings
+npm --prefix web run test
+npm --prefix web run build
 ```
+
+Arquitectura C4, decisiones y estrategia de verificación: [`docs/architecture/C4.md`](docs/architecture/C4.md), [`docs/adr/`](docs/adr/) y [`docs/TESTING.md`](docs/TESTING.md). El experimento y sus límites están en [`EXPERIMENT.md`](EXPERIMENT.md).

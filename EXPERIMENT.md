@@ -44,6 +44,8 @@ Un buzón estructurado puede reducir el trabajo de coordinación entre dos sesio
 | 2026-10-10 | `NEEDS_HUMAN` se modela como decisión pendiente separada del estado de revisión. | Permite pausar y reanudar sin perder el estado previo. |
 | 2026-10-10 | Sin web, HTTP, MCP o API durante Fase 1. | Aislar y validar el protocolo antes de integrar transporte. |
 | 2026-10-10 | El consumo de tokens no es criterio obligatorio si la interfaz no lo expone. | Evitar mediciones inventadas o comparaciones incompletas. |
+| 2026-10-10 | `PRAGMA user_version` y migraciones SQL transaccionales protegen la evolución del almacenamiento local. | El historial debe poder abrirse desde futuras versiones sin cambios destructivos implícitos. |
+| 2026-10-10 | La primera interfaz será un dashboard local React/TypeScript compilado y servido por Rust en `127.0.0.1`. | Permite validar los flujos humanos sin servicios externos ni un runtime de Node en uso. |
 
 ## Prueba de comunicación mediante interfaz
 
@@ -54,3 +56,11 @@ Un buzón estructurado puede reducir el trabajo de coordinación entre dos sesio
 - Conclusión: se verificó que esta sesión pudo escribir en el hilo indicado y leer su respuesta. Esto demuestra un intercambio mediado por la interfaz gráfica; no demuestra una integración persistente, MCP ni comunicación autónoma entre sesiones.
 - Límite: la respuesta propuso registrar una decisión de arquitectura, pero esta prueba solo autorizó registrar el intercambio. La propuesta queda pendiente de revisión y no se trata como aprobación para implementar migraciones u otros cambios.
 - Privacidad: el registro omite el URL/ID del chat y cualquier contenido ajeno a esta prueba.
+
+## Revisión técnica de alcance
+
+- Fecha: 2026-10-10.
+- Procedencia: respuesta recibida en la conversación ChatGPT indicada por César; mensaje etiquetado explícitamente como escrito por Codex.
+- Decisión técnica delegada por César: usar React + TypeScript compilado con Vite, servido como estáticos desde Rust; dashboard limitado a tareas, mensajes, historial, transiciones y decisiones humanas.
+- Controles solicitados: loopback `127.0.0.1`, protección frente a solicitudes de otros orígenes/DNS rebinding/CSRF, validación y límites de entradas, CSP, core independiente de UI/HTTP, pruebas de API e interfaz.
+- Límite: esta revisión guía decisiones dentro del alcance reversible delegado. No autoriza gasto, despliegue externo, cambios de infraestructura, secretos ni acciones fuera de CodeXPT.
