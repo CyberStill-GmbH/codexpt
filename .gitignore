@@ -1,7 +1,18 @@
+# Local Rust build artifacts.
+debug
 /target
+**/*.rs.bk
+*.pdb
+**/mutants.out*/
+rustc-ice-*.txt
+
+# CodeXPT local state and Terraform credentials/state.
 /.codexpt
 **/.terraform/
 *.tfstate
 *.tfstate.*
 *.tfplan
 terraform.tfvars
+
+# RustRover
+# .idea/
