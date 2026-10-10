@@ -1,27 +1,29 @@
 # CodeXPT hosting and deployment plan
 
-**Status (2026-10-10): local MVP verified; hosted deployment is not release-ready.** The AWS EC2 design below costs an estimated US$17.51/month before variable charges. Since César already pays for Railway Hobby, the current cost-first candidate is one Railway service running the existing Rust/Axum application with SQLite on a persistent volume. Railway reports a US$5/month Hobby subscription that includes US$5 of resource usage; whether CodeXPT adds any invoice amount depends on the account's existing consumption and actual app measurements. The Railway account balance and usage have not been inspected. AWS resources, DNS and certificates have not been changed. Authentication, backup/restore and hosted authorization gates remain open, so do not expose this MVP publicly yet. The old AWS Terraform stack is not the cost-first plan and must not be applied under a sub-US$1 incremental target.
+**Status (2026-10-10): local MVP and Docker packaging verified; hosted deployment is not release-ready.** The current candidate for a small private beta is one Railway service running the Rust/Axum application, with its embedded frontend and SQLite database on a persistent volume. The local image passed readiness, frontend, fail-closed configuration, volume-restart, and synthetic SQLite backup/restore smoke checks. The Railway Hobby subscription is reported as US$5/month and includes US$5 of resource usage; account usage and the service's measured consumption have not been inspected, so incremental cost is not yet known. Railway CLI reports no linked project. No cloud resource, DNS record, or certificate has been changed. Authentication, authorization, recovery, and hosted end-to-end release gates remain open. **Railway same-origin is the sole active deployment plan in this document. AWS EC2/Terraform is a higher-cost alternative, not an instruction to deploy.**
 
 ChatGPT reviewed the Railway/AWS comparison and recommended preparing Railway packaging first, without creating services or changing DNS. See [the cost decision](#cost-decision-railway-vs-aws) and [ADR-0007](../adr/0007-workers-d1-hosting-spike.md) for the separate Workers/D1 alternative.
 
 ## Target topology
 
-- Frontend: Vercel at `https://codexpt.jappi.net.pe`.
-- API: one Amazon Linux 2023 ARM64 EC2 instance at `https://api.codexpt.jappi.net.pe`.
-- Compute and data: `t4g.small`, encrypted 20 GiB gp3 EBS, one SQLite file shared by task and identity modules. One API process only; this is a single point of failure, not a highly available service.
-- TLS: Caddy terminates HTTPS with ACME and proxies to the Rust API on loopback. Only TCP 80 and 443 are public. No SSH or database port; use Systems Manager Session Manager.
-- Identity: Terraform defaults to a Cognito user pool (admin-created users, authorization-code flow with PKCE, public client). It can instead select OpenAI using an OpenAI-issued public OAuth client ID and the exact `https://api.codexpt.jappi.net.pe/api/auth/callback`; OpenAI website OAuth availability must be granted before that selection is usable. CodeXPT owns workspace roles and invitations in SQLite.
-- Recovery: SQLite online backup, daily S3 upload to a private, versioned bucket; lifecycle expires current and old versions after 30 days. The restore command writes only to a new database path.
-- DNS: preserve the existing AWS Route 53 delegation; do not switch nameservers to Vercel because that would also affect `app.jappi.net.pe`. The current Terraform does not manage Route 53 records. Verify the authoritative zone, registrar delegation, all existing records, and DNSSEC before adding `codexpt` and `api.codexpt` records.
+- One Railway service builds and runs the Rust/Axum server; that server embeds and serves the Vite frontend. Browser pages and API calls share one HTTPS origin, so no separate Vercel frontend or cross-origin session configuration is needed for the beta.
+- One replica and one persistent Railway volume hold the shared SQLite file used by task and identity modules. This is a small, single-writer private beta design, not a high-availability or horizontally scalable architecture.
+- Railway terminates HTTPS. Use the provider-generated HTTPS domain for isolated staging first. Add `codexpt.jappi.net.pe` only after the hosted identity and authorization gates pass and the existing DNS zone has been inventoried.
+- The OIDC provider must support the application's authorization-code + PKCE flow with a public client. The exact issuer, client id, callback, success URL, public host, and browser origin must match the provider and Railway domain. CodeXPT owns workspace membership and roles in SQLite; provider claims do not grant roles.
+- Mount the persistent volume at `/data`; the container stores SQLite at `/data/codexpt.sqlite3` by default. Keep one replica. Backups must use SQLite's online backup operation and be restored to a fresh path before use.
+- Secrets belong in Railway's service variables and must never enter the repository, Docker build context, image layers, or client bundle.
 
 ## Deployment prerequisites
 
-1. Build and test a Linux ARM64 binary from the reviewed commit. Publish it at an immutable HTTPS URL and record its SHA-256. The EC2 bootstrap refuses a mismatch. Do not use the `.invalid` URL or zero hash in `terraform.tfvars.example` for a real plan or deployment.
-2. Run the IaC security scanner and fix or document its findings. This environment has Terraform installed but no `tfsec`, `trivy`, `checkov`, or `tflint` executable was present during preparation.
-3. Verify the existing Vercel `codexpt` project, `VITE_API_BASE_URL`, and assigned frontend domain. The project is separate from QAPAQ; no production deployment has been made.
-4. Confirm login to Punto.pe with the domain owner. Inspect delegation, all A/AAAA/CNAME/MX/TXT/CAA records, DNSSEC/DS, mail, and third-party verification records. Preserve the AWS nameservers and add only the two CodeXPT host records after AWS access is restored; prepare rollback and never replace the current delegation blindly.
-5. Configure a real budget-alert email. AWS Budgets notifications are alerts, not a spending cap.
-6. Generate `terraform plan -out=...` with local state only, inspect every resource and cost, and present the exact plan for review. Terraform state/plan files are ignored by Git and must stay on protected local storage. No client secret is provisioned by this design; still do not publish state or plans because they expose account topology and identifiers.
+Before creating a Railway service or a public URL:
+
+1. **Passed locally:** build the multi-stage Docker image and verify the entrypoint binds to `0.0.0.0:$PORT`, requires hosted OIDC settings, runs as a non-root user, and stores SQLite under `/data`. Repeat this check from the exact reviewed commit before release.
+2. **Passed locally:** `/api/health/ready` fails closed without identity configuration and succeeds with synthetic hosted settings; container restart preserves the mounted test database and synthetic backup/restore succeeds. Still verify restart/shutdown behavior on Railway itself.
+3. **Open:** complete the HTTP authorization matrix for Owner/Editor/Viewer, cross-workspace denial, invite expiry/replay, membership changes, and session revocation. Test CSRF and secure cookie behavior with the exact chosen origin.
+4. Validate a real OIDC provider and a browser login/callback/logout flow using dedicated test identities. Confirm that first login does not create an Owner and that the first Owner is bootstrapped explicitly.
+5. Test volume persistence across restart and a consistent SQLite backup/restore, including session and invitation invalidation rules.
+6. Inspect the Railway workspace plan, usage, remaining included credit, and other services before setting workspace-wide cost controls. The app's actual incremental cost is unknown until measured in the target workspace.
+7. Run hosted E2E with synthetic data, inspect logs for secret/token leakage, record rollback steps, and obtain explicit approval before opening invitations or pointing the purchased domain at the service.
 
 ## Cost estimate
 
@@ -67,11 +69,12 @@ Only after these gates pass should a hosted beta plan be produced. Keep Terrafor
 
 ## Bootstrap and operations
 
-1. After an approved apply, add the API A record in the chosen DNS zone and wait for public resolution before expecting Caddy ACME issuance. Add/verify the Vercel frontend domain separately.
-2. Create/sign in to the initial user through the selected identity provider. Retrieve the verified `(issuer, sub)` and email from the provider, then use SSM to run the one-time `identity bootstrap-owner` command with those exact values and the workspace name. No first-login auto-owner behavior exists.
-3. Test a real login, logout, invite acceptance, Owner/Editor/Viewer access, CSRF/CORS, and cross-workspace denials from a browser against the Vercel UI and AWS API. Test a backup upload and restore before admitting beta users.
-4. Review memory/CPU, API latency, backup age, disk use, Caddy certificate status, and logs. No monitoring/alerting beyond the AWS cost budget and instance/systemd logs is included yet.
-5. To shut down permanently, take and verify a final SQLite backup, remove/repurpose DNS only after review, disable Cognito deletion protection, and handle the non-empty versioned backup bucket deliberately. Then inspect the exact destroy plan. Do not delete the bucket or database without confirming the recovery copy.
+1. Create the service only after release gates pass. Set the Railway volume mount to `/data`, one replica, Dockerfile build, and the readiness path `/api/health/ready`.
+2. Set provider values as service variables: `CODEXPT_OIDC_ISSUER`, `CODEXPT_OIDC_CLIENT_ID`, `CODEXPT_OIDC_REDIRECT_URI`, `CODEXPT_LOGIN_SUCCESS_URL`, `CODEXPT_API_HOST`, and `CODEXPT_WEB_ORIGIN`. Set the callback to the exact hosted `/api/auth/callback` URL. Do not put credentials in build arguments or commit them.
+3. Sign in with the initial verified identity, retrieve its exact `(issuer, sub)` and verified email from the provider, then run the explicit one-time `identity bootstrap-owner` command against the persistent database. No first-login Owner behavior exists.
+4. Verify login/logout, invite acceptance, role restrictions, CSRF, origin/host checks, cross-workspace denial, restart persistence, backup, and restore before admitting users.
+5. Monitor Railway's resource usage, service restarts, disk use, backup age, and application logs. Review workspace-wide cost controls before changing them because they can suspend unrelated services.
+6. For shutdown, stop the service, create and verify a final online SQLite backup, and only then remove the Railway service/volume or custom domain after explicit review. A versioned backup or volume must not be deleted until the recovery copy is verified.
 
 ## Known gaps / decisions
 
@@ -79,9 +82,9 @@ Only after these gates pass should a hosted beta plan be produced. Keep Terrafor
 - The monthly estimate excludes the already purchased domain; its registrar renewal is a separate recurring cost and must be added to the product's total operating budget.
 - Vercel's existing project/domain assignment does not establish that its Hobby plan is valid for a commercial product. Verify the current plan and terms before relying on it; the low-cost spike should include a compliant frontend host.
 
-- The GitHub remote is linked to the public `CyberStill-GmbH/codexpt` repository, and the Vercel project/domain are configured. There is no immutable Linux ARM64 release artifact, deployable AWS plan, or verified registrar session. AWS SSO credentials are currently unavailable in this environment, so no account inspection or deployable `terraform plan` can be produced yet.
+- Railway's current account usage, available resources, and workspace-wide cost control settings have not been inspected. No deployment has been performed.
 - Neither Cognito nor OpenAI's real login and hosted browser flow has been exercised. The local controlled provider test is not evidence of a live login. OpenAI website-client access and callback registration remain external prerequisites.
-- The API callback and Vercel UI are distinct origins. Exact CORS/CSRF policy exists in code, but must be verified through the deployed browser flow.
+- The application supports an API host and web origin setting; the active beta plan requires both to use the same Railway HTTPS origin. This exact hosted browser boundary remains unverified.
 - The one-instance SQLite topology is approved only for a small private beta. It has downtime risk and one writer; it does not provide horizontal scaling or high availability.
 - Cognito has deletion protection and S3 has `force_destroy = false`; clean teardown needs explicit operator steps. Backups are data and must be retained or deliberately purged.
 - No SSM VPC endpoints are provisioned; the instance needs working public egress through its Elastic IP and internet gateway for SSM, package/image retrieval, the selected identity provider, and S3. There is no NAT Gateway.

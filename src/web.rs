@@ -173,7 +173,7 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
         IdentityStore::connect_sqlite(&database_path, 5).await?
     };
     let oidc_config = OidcConfig::from_env();
-    let (address, api_host, web_origin) = if oidc_config.is_some() {
+    let (address, api_host, web_origin) = if let Some(config) = oidc_config.as_ref() {
         let bind = std::env::var("CODEXPT_BIND_ADDR")
             .map_err(|_| "CODEXPT_BIND_ADDR is required when OIDC is enabled")?
             .parse::<SocketAddr>()?;
@@ -181,11 +181,14 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
             .map_err(|_| "CODEXPT_API_HOST is required when OIDC is enabled")?;
         let web_origin = std::env::var("CODEXPT_WEB_ORIGIN")
             .map_err(|_| "CODEXPT_WEB_ORIGIN is required when OIDC is enabled")?;
-        if !web_origin.starts_with("https://") || api_host.is_empty() {
-            return Err("hosted OIDC requires an HTTPS web origin and an API host".into());
-        }
+        validate_hosted_origin(config, &api_host, &web_origin)?;
         (bind, Some(api_host), Some(web_origin))
     } else {
+        if std::env::var_os("CODEXPT_BIND_ADDR").is_some() {
+            return Err(
+                "CODEXPT_BIND_ADDR is only valid with a complete OIDC configuration".into(),
+            );
+        }
         (SocketAddr::from(([127, 0, 0, 1], port)), None, None)
     };
     let hosted = api_host.is_some();
@@ -205,11 +208,64 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
         eprintln!("Only loopback clients are accepted. Press Ctrl+C to stop.");
     }
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+fn validate_hosted_origin(
+    config: &OidcConfig,
+    api_host: &str,
+    web_origin: &str,
+) -> Result<(), &'static str> {
+    if api_host.is_empty()
+        || !api_host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        || api_host.starts_with('.')
+        || api_host.ends_with('.')
+        || api_host.contains("..")
+    {
+        return Err("hosted OIDC requires a valid public host without scheme or path");
+    }
+    let origin = format!("https://{api_host}");
+    if web_origin != origin {
+        return Err(
+            "hosted beta requires the API host and browser origin to share one HTTPS origin",
+        );
+    }
+    if config.redirect_uri != format!("{origin}/api/auth/callback") {
+        return Err("OIDC redirect URI must match the hosted API callback exactly");
+    }
+    if config.success_url != origin && config.success_url != format!("{origin}/") {
+        return Err("OIDC success URL must return to the hosted browser origin");
+    }
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let terminate = async {
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut signal) => {
+                    signal.recv().await;
+                }
+                Err(error) => {
+                    eprintln!("could not register SIGTERM handler: {error}");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = terminate => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +301,7 @@ fn router_with_identity_and_origins(
     };
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/health/ready", get(readiness))
         .route("/api/auth/status", get(auth_status))
         .route("/api/auth/login", get(auth_login))
         .route("/api/auth/callback", get(auth_callback))
@@ -766,6 +823,28 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok", "mode": mode}))
 }
 
+async fn readiness(State(state): State<AppState>) -> Response {
+    let (Some(identity), Some(_oidc)) = (state.identity.as_ref(), state.oidc.as_ref()) else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(
+                serde_json::json!({"status": "not_ready", "reason": "identity is not configured"}),
+            ),
+        )
+            .into_response();
+    };
+
+    if identity.ping().await.is_err() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"status": "not_ready", "reason": "identity storage is unavailable"})),
+        )
+            .into_response();
+    }
+
+    Json(serde_json::json!({"status": "ready", "mode": "hosted"})).into_response()
+}
+
 async fn list_tasks(
     State(state): State<AppState>,
     Extension(context): Extension<RequestContext>,
@@ -1059,7 +1138,16 @@ mod tests {
         }
     }
 
-    async fn authenticated_app() -> (Router, PathBuf, String, String, String, String, String) {
+    async fn authenticated_app() -> (
+        Router,
+        PathBuf,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) {
         let file = NamedTempFile::new().unwrap();
         let path = file.into_temp_path().keep().unwrap();
         Store::open(&path).unwrap();
@@ -1082,6 +1170,15 @@ mod tests {
             )
             .await
             .unwrap();
+        let viewer = identity
+            .provision_identity(
+                "https://issuer.example",
+                "viewer",
+                Some("viewer@example.test"),
+                true,
+            )
+            .await
+            .unwrap();
         let workspace = identity
             .create_workspace_for_owner(&owner, "Secure workspace")
             .await
@@ -1100,8 +1197,23 @@ mod tests {
             .accept_invite(&invite.raw_token, &editor, None)
             .await
             .unwrap();
+        let viewer_invite = identity
+            .create_invite(
+                &owner,
+                None,
+                &workspace.workspace_id,
+                "viewer@example.test",
+                crate::identity::InviteRole::Viewer,
+            )
+            .await
+            .unwrap();
+        identity
+            .accept_invite(&viewer_invite.raw_token, &viewer, None)
+            .await
+            .unwrap();
         let owner_session = identity.create_session(&owner).await.unwrap();
         let editor_session = identity.create_session(&editor).await.unwrap();
+        let viewer_session = identity.create_session(&viewer).await.unwrap();
         let app = router_with_identity(
             path.clone(),
             PORT,
@@ -1116,6 +1228,7 @@ mod tests {
             owner_session.csrf_token,
             owner_session.session_id,
             editor_session.raw_token,
+            viewer_session.raw_token,
         )
     }
 
@@ -1145,7 +1258,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_owner_with_csrf_can_issue_workspace_invites() {
-        let (app, path, workspace_id, owner_token, owner_csrf, _, editor_token) =
+        let (app, path, workspace_id, owner_token, owner_csrf, _, editor_token, _) =
             authenticated_app().await;
         let editor_csrf = crate::identity::derive_csrf_token(&editor_token);
         let editor_attempt = app
@@ -1194,6 +1307,54 @@ mod tests {
         let invite: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(!invite["raw_token"].as_str().unwrap().is_empty());
         std::fs::remove_file(path).ok();
+    }
+
+    #[tokio::test]
+    async fn viewer_is_read_only_at_the_http_boundary() {
+        let (app, _path, workspace_id, _owner, _owner_csrf, _owner_session, _editor, viewer) =
+            authenticated_app().await;
+        let viewer_csrf = crate::identity::derive_csrf_token(&viewer);
+
+        let read = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::GET,
+                "/api/tasks",
+                "",
+                &workspace_id,
+                &viewer,
+                &viewer_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(read.status(), StatusCode::OK);
+
+        let task_write = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                "/api/tasks",
+                r#"{"title":"Viewer write","description":"must be denied"}"#,
+                &workspace_id,
+                &viewer,
+                &viewer_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(task_write.status(), StatusCode::FORBIDDEN);
+
+        let membership_write = app
+            .oneshot(authenticated_request(
+                Method::POST,
+                &format!("/api/workspaces/{workspace_id}/invites"),
+                r#"{"email":"new@example.test","role":"EDITOR"}"#,
+                &workspace_id,
+                &viewer,
+                &viewer_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(membership_write.status(), StatusCode::FORBIDDEN);
     }
 
     fn app() -> (Router, PathBuf) {
@@ -1447,9 +1608,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn readiness_is_not_successful_when_hosted_identity_is_unconfigured() {
+        let (app, _) = app();
+        let response = app
+            .oneshot(request(Method::GET, "/api/health/ready", ""))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn readiness_succeeds_when_identity_and_oidc_are_configured() {
+        let (app, ..) = authenticated_app().await;
+        let response = app
+            .oneshot(request(Method::GET, "/api/health/ready", ""))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn readiness_fails_when_the_hosted_identity_database_is_unavailable() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.into_temp_path().keep().unwrap();
+        let identity = IdentityStore::connect_sqlite(&path, 1).await.unwrap();
+        let state = AppState {
+            database_path: path.clone(),
+            port: PORT,
+            identity: Some(identity.clone()),
+            oidc: Some(OidcConfig {
+                issuer: "https://issuer.example".into(),
+                client_id: "client-test".into(),
+                redirect_uri: "https://codexpt.example/api/auth/callback".into(),
+                success_url: "https://codexpt.example/".into(),
+            }),
+            api_host: Some("codexpt.example".into()),
+            web_origin: Some("https://codexpt.example".into()),
+        };
+        identity.close_for_test().await;
+
+        let response = readiness(State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn hosted_oidc_urls_must_match_the_same_public_origin() {
+        let config = OidcConfig {
+            issuer: "https://issuer.example".into(),
+            client_id: "client-test".into(),
+            redirect_uri: "https://codexpt.example/api/auth/callback".into(),
+            success_url: "https://codexpt.example/".into(),
+        };
+        assert!(
+            validate_hosted_origin(&config, "codexpt.example", "https://codexpt.example").is_ok()
+        );
+        assert!(
+            validate_hosted_origin(&config, "codexpt.example", "https://frontend.example").is_err()
+        );
+
+        let mut wrong_callback = config;
+        wrong_callback.redirect_uri = "https://other.example/api/auth/callback".into();
+        assert!(
+            validate_hosted_origin(
+                &wrong_callback,
+                "codexpt.example",
+                "https://codexpt.example"
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn authenticated_workspace_scope_blocks_idor_and_editor_approval_and_binds_owner_session()
     {
-        let (app, path, workspace_id, owner_token, owner_csrf, owner_session_id, editor_token) =
+        let (app, path, workspace_id, owner_token, owner_csrf, owner_session_id, editor_token, _) =
             authenticated_app().await;
         let editor_csrf = crate::identity::derive_csrf_token(&editor_token);
         let created = app

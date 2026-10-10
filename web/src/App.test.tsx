@@ -69,6 +69,40 @@ describe('CodeXPT dashboard smoke', () => {
     expect(init?.headers).toMatchObject({ 'X-CodeXPT-Workspace-ID': 'workspace-1', 'X-CSRF-Token': 'csrf-test' })
   })
 
+  it('lets the Owner change a member role and revoke that member', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/auth/status') return json({ configured: true })
+      if (url === '/api/auth/me') return json({ csrf_token: 'csrf-test', email: 'owner@example.test' })
+      if (url === '/api/workspaces') return json([{ workspace_id: 'workspace-1', name: 'Alpha', role: 'OWNER' }])
+      if (url === '/api/tasks') return json([])
+      if (url === '/api/workspaces/workspace-1/members') return json([
+        { user_id: 'owner-1', email: 'owner@example.test', role: 'OWNER' },
+        { user_id: 'editor-1', email: 'editor@example.test', role: 'EDITOR' },
+      ])
+      if (url === '/api/workspaces/workspace-1/members/editor-1' && ['PATCH', 'DELETE'].includes(init?.method ?? '')) return json({}, 204)
+      return json({ error: 'not found' }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /miembros/i }))
+    const dialog = within(await screen.findByRole('dialog', { name: 'Miembros' }))
+    expect(dialog.getByText('Owner · administra el workspace')).toBeTruthy()
+    expect(dialog.queryByRole('button', { name: /revocar acceso a owner/i })).toBeNull()
+
+    fireEvent.change(dialog.getByLabelText('Rol de editor@example.test'), { target: { value: 'VIEWER' } })
+    expect(await dialog.findByText('Viewer · solo lectura')).toBeTruthy()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/workspaces/workspace-1/members/editor-1', expect.objectContaining({ method: 'PATCH' })))
+
+    fireEvent.click(dialog.getByRole('button', { name: 'Revocar acceso a editor@example.test' }))
+    fireEvent.click(dialog.getByRole('button', { name: 'Confirmar' }))
+    await waitFor(() => expect(dialog.queryByText('editor@example.test')).toBeNull())
+    const deletion = fetchMock.mock.calls.find(([calledUrl, calledInit]) => String(calledUrl).endsWith('/editor-1') && calledInit?.method === 'DELETE')
+    expect(deletion).toBeTruthy()
+    expect(deletion?.[1]?.headers).toMatchObject({ 'X-CodeXPT-Workspace-ID': 'workspace-1', 'X-CSRF-Token': 'csrf-test', 'Content-Type': 'application/json' })
+  })
+
   it('keeps a hosted Viewer read-only across creation, messages, decisions, and transitions', async () => {
     const viewerTask = { ...task, status: 'resolved' }
     const viewerDetail = { ...detail, task: viewerTask }

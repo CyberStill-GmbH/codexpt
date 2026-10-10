@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, CircleDot, Clock3, FileText, LockKeyhole, LogOut, Plus, Search, Send, ShieldAlert, ShieldCheck, Sparkles, Users } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, CircleDot, Clock3, FileText, LockKeyhole, LogOut, Plus, Search, Send, ShieldAlert, ShieldCheck, Sparkles, UserRoundX, Users } from 'lucide-react'
 import './App.css'
 
 type Status = 'open' | 'proposed' | 'under_review' | 'resolved' | 'approved'
@@ -46,7 +46,7 @@ let activeCsrfToken: string | null = null
 const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const isMutation = Boolean(init?.method && init.method !== 'GET')
   const response = await fetch(`${API_BASE}${url}`, { credentials: 'include', ...init, headers: {
-    ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(init?.body || isMutation ? { 'Content-Type': 'application/json' } : {}),
     ...(activeWorkspaceId && (url.startsWith('/api/tasks') || url.startsWith('/api/workspaces/')) ? { 'X-CodeXPT-Workspace-ID': activeWorkspaceId } : {}),
     ...(isMutation && activeCsrfToken ? { 'X-CSRF-Token': activeCsrfToken } : {}),
     ...init?.headers,
@@ -214,6 +214,8 @@ function Dashboard() {
   const [inviteRole, setInviteRole] = useState<'EDITOR' | 'VIEWER'>('EDITOR')
   const [inviteToken, setInviteToken] = useState('')
   const [inviteError, setInviteError] = useState('')
+  const [memberError, setMemberError] = useState('')
+  const [confirmingRemoval, setConfirmingRemoval] = useState<string | null>(null)
   const [hosted, setHosted] = useState(false)
   const [workspaceRole, setWorkspaceRole] = useState('')
   const [profileEmail, setProfileEmail] = useState('')
@@ -330,9 +332,30 @@ function Dashboard() {
 
   const openMembers = async () => {
     if (!activeWorkspaceId) return
-    setInviteError(''); setInviteToken(''); setMembersDialog(true)
+    setInviteError(''); setMemberError(''); setInviteToken(''); setConfirmingRemoval(null); setMembersDialog(true)
     try { setMembers(await api<Member[]>(`/api/workspaces/${activeWorkspaceId}/members`)) }
-    catch (e) { setInviteError(e instanceof Error ? e.message : 'No se pudieron cargar los miembros.') }
+    catch (e) { setMemberError(e instanceof Error ? e.message : 'No se pudieron cargar los miembros.') }
+  }
+  const changeMemberRole = async (member: Member, role: 'EDITOR' | 'VIEWER') => {
+    if (!activeWorkspaceId || member.role === role) return
+    setBusy(true); setMemberError('')
+    try {
+      await api(`/api/workspaces/${activeWorkspaceId}/members/${member.user_id}`, { method: 'PATCH', body: JSON.stringify({ role }) })
+      setMembers((current) => current.map((item) => item.user_id === member.user_id ? { ...item, role } : item))
+      setStatusMessage(`Rol actualizado para ${member.email ?? 'el miembro'}.`)
+    } catch (e) { setMemberError(e instanceof Error ? e.message : 'No se pudo cambiar el rol.') }
+    finally { setBusy(false) }
+  }
+  const revokeMember = async (member: Member) => {
+    if (!activeWorkspaceId) return
+    setBusy(true); setMemberError('')
+    try {
+      await api(`/api/workspaces/${activeWorkspaceId}/members/${member.user_id}`, { method: 'DELETE' })
+      setMembers((current) => current.filter((item) => item.user_id !== member.user_id))
+      setConfirmingRemoval(null)
+      setStatusMessage(`Se revocó el acceso de ${member.email ?? 'el miembro'}.`)
+    } catch (e) { setMemberError(e instanceof Error ? e.message : 'No se pudo revocar el acceso.') }
+    finally { setBusy(false) }
   }
   const createInvite = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -400,7 +423,7 @@ function Dashboard() {
     </main>
 
     {dialog && <div className="dialog-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDialog(false) }}><section ref={newTaskDialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="new-task-title"><div className="dialog-head"><div><span className="eyebrow">Nuevo registro</span><h2 id="new-task-title">Crear revisión</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={() => setDialog(false)}>×</button></div><form onSubmit={createTask}><label htmlFor="new-title">Título</label><input id="new-title" name="title" data-dialog-initial-focus required maxLength={160} placeholder="Ej. Evaluar diseño de autenticación" /><label htmlFor="new-description">Contexto <span>opcional</span></label><textarea id="new-description" name="description" maxLength={4000} rows={4} placeholder="Objetivo, alcance y criterios de revisión" /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setDialog(false)}>Cancelar</button><button type="submit" className="primary-button" disabled={busy}><Plus size={15} /> Crear revisión</button></div></form></section></div>}
-    {membersDialog && <div className="dialog-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setMembersDialog(false) }}><section ref={membersDialogRef} className="dialog members-dialog" role="dialog" aria-modal="true" aria-labelledby="members-title"><div className="dialog-head"><div><span className="eyebrow">Workspace · Acceso privado</span><h2 id="members-title">Miembros</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={() => setMembersDialog(false)}>×</button></div><ul className="member-list">{members.map((member) => <li key={member.user_id}><span className="member-avatar">{member.email?.[0]?.toUpperCase() ?? 'U'}</span><span><strong>{member.email ?? 'Correo privado'}</strong><small>{member.role}</small></span></li>)}</ul><form onSubmit={createInvite}><label htmlFor="invite-email">Invitar por correo verificado</label><input id="invite-email" type="email" autoComplete="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} maxLength={320} required placeholder="persona@equipo.com" /><label htmlFor="invite-role">Rol inicial</label><select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'EDITOR' | 'VIEWER')}><option value="EDITOR">Editor · puede colaborar</option><option value="VIEWER">Viewer · solo lectura</option></select>{inviteError && <p className="invite-error" role="alert">{inviteError}</p>}{inviteToken && <div className="invite-token"><strong>Comparte este código de un solo uso</strong><code>{inviteToken}</code><small>La persona debe iniciar sesión con el correo invitado y pegar el código en /invite. El código no se volverá a mostrar.</small></div>}<div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setMembersDialog(false)}>Cerrar</button><button type="submit" className="primary-button" disabled={busy || !inviteEmail.trim()}><Users size={15} /> Crear invitación</button></div></form></section></div>}
+    {membersDialog && <div className="dialog-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setMembersDialog(false) }}><section ref={membersDialogRef} className="dialog members-dialog" role="dialog" aria-modal="true" aria-labelledby="members-title"><div className="dialog-head"><div><span className="eyebrow">Workspace · Acceso privado</span><h2 id="members-title">Miembros</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={() => setMembersDialog(false)}>×</button></div><p className="members-intro">Administra quién puede colaborar y con qué nivel de acceso.</p>{memberError && <p className="invite-error" role="alert">{memberError}</p>}<ul className="member-list">{members.map((member) => { const isCurrentUser = member.email?.toLocaleLowerCase() === profileEmail.toLocaleLowerCase(); const isOwner = member.role === 'OWNER'; const canManage = !isOwner && !isCurrentUser; return <li key={member.user_id}><span className="member-avatar" aria-hidden="true">{member.email?.[0]?.toUpperCase() ?? 'U'}</span><span className="member-copy"><strong title={member.email ?? undefined}>{member.email ?? 'Correo privado'}{isCurrentUser ? ' · Tú' : ''}</strong><small>{isOwner ? 'Owner · administra el workspace' : member.role === 'EDITOR' ? 'Editor · puede colaborar' : 'Viewer · solo lectura'}</small></span>{canManage && <div className="member-actions">{confirmingRemoval === member.user_id ? <><span className="member-confirm-copy">Revocar acceso a esta persona?</span><button type="button" className="quiet-button member-confirm" disabled={busy} onClick={() => void revokeMember(member)}>Confirmar</button><button type="button" className="quiet-button member-cancel" disabled={busy} onClick={() => setConfirmingRemoval(null)}>Cancelar</button></> : <><label className="sr-only" htmlFor={`member-role-${member.user_id}`}>Rol de {member.email ?? 'miembro'}</label><select id={`member-role-${member.user_id}`} value={member.role} disabled={busy} onChange={(event) => void changeMemberRole(member, event.target.value as 'EDITOR' | 'VIEWER')}><option value="EDITOR">Editor</option><option value="VIEWER">Viewer</option></select><button type="button" className="member-remove" aria-label={`Revocar acceso a ${member.email ?? 'miembro'}`} disabled={busy} onClick={() => setConfirmingRemoval(member.user_id)}><UserRoundX size={15} /></button></>}</div>}</li> })}</ul><form onSubmit={createInvite}><label htmlFor="invite-email">Invitar por correo verificado</label><input id="invite-email" type="email" autoComplete="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} maxLength={320} required placeholder="persona@equipo.com" /><label htmlFor="invite-role">Rol inicial</label><select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'EDITOR' | 'VIEWER')}><option value="EDITOR">Editor · puede colaborar</option><option value="VIEWER">Viewer · solo lectura</option></select>{inviteError && <p className="invite-error" role="alert">{inviteError}</p>}{inviteToken && <div className="invite-token"><strong>Comparte este código de un solo uso</strong><code>{inviteToken}</code><small>La persona debe iniciar sesión con el correo invitado y pegar el código en /invite. El código no se volverá a mostrar.</small></div>}<div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setMembersDialog(false)}>Cerrar</button><button type="submit" className="primary-button" disabled={busy || !inviteEmail.trim()}><Users size={15} /> Crear invitación</button></div></form></section></div>}
   </div>
 }
 

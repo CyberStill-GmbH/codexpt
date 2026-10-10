@@ -8,7 +8,7 @@
 
 CodeXPT es un espacio de trabajo local para organizar propuestas, revisiones entre colaboradores y decisiones humanas con un historial consultable. La interfaz reúne el estado de cada revisión, la conversación y su evidencia en una sola vista.
 
-> **Estado del proyecto:** MVP local en evolución. No hay una instancia pública desplegada ni conexiones automáticas a Codex o ChatGPT. La autenticación multiusuario está en fase experimental; no uses esta rama como servicio de producción.
+> **Estado del proyecto:** MVP local en evolución. No hay una instancia pública desplegada ni conexiones automáticas a Codex o ChatGPT. La autenticación multiusuario y la operación hospedada siguen en validación; este proyecto todavía no es un servicio de producción.
 
 ## Una vista del producto
 
@@ -47,7 +47,7 @@ Para desarrollo del frontend, instala Node.js y ejecuta `npm --prefix web ci` y 
 
 ## Estado y próximos hitos
 
-El protocolo local, la persistencia, la CLI y el dashboard tienen cobertura automatizada. La siguiente etapa aún debe validar la identidad alojada, las invitaciones y los permisos en un entorno real antes de exponer el servicio. La colaboración directa entre agentes y el hosting dentro del presupuesto siguen en evaluación.
+El protocolo local, la persistencia, la CLI y el dashboard tienen cobertura automatizada. El contenedor se compiló y pasó un smoke local reproducible; la siguiente etapa debe validar un proveedor OIDC real, la autorización completa, invitaciones, recuperación y E2E en un entorno alojado antes de abrir una beta privada. La colaboración directa entre agentes sigue fuera del alcance actual.
 
 - [Validación y límites conocidos](docs/VALIDATION-REPORT.md)
 - [Hoja de ruta](ROADMAP.md)

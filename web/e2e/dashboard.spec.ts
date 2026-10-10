@@ -73,6 +73,8 @@ test('hosted owner: member management screen renders and creates a one-time invi
   }
   const workspaceId = '00000000-0000-4000-8000-000000000002'
   let inviteRequest: { email?: string; role?: string } | null = null
+  let roleUpdate: { role?: string } | null = null
+  let revokedMember: string | null = null
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
 
@@ -85,6 +87,14 @@ test('hosted owner: member management screen renders and creates a one-time invi
     if (url.pathname === '/api/tasks') return route.fulfill({ json: [task] })
     if (url.pathname === `/api/tasks/${task.task_id}`) return route.fulfill({ json: { task, messages: [], events: [], pending_decision: null } })
     if (url.pathname.endsWith('/members') && request.method() === 'GET') return route.fulfill({ json: [{ user_id: 'owner-1', email: 'owner@example.test', role: 'OWNER' }, { user_id: 'editor-1', email: 'editor@example.test', role: 'EDITOR' }] })
+    if (url.pathname === `/api/workspaces/${workspaceId}/members/editor-1` && request.method() === 'PATCH') {
+      roleUpdate = request.postDataJSON() as { role?: string }
+      return route.fulfill({ status: 204, body: '' })
+    }
+    if (url.pathname === `/api/workspaces/${workspaceId}/members/editor-1` && request.method() === 'DELETE') {
+      revokedMember = 'editor-1'
+      return route.fulfill({ status: 204, body: '' })
+    }
     if (url.pathname === `/api/workspaces/${workspaceId}/invites` && request.method() === 'POST') {
       inviteRequest = request.postDataJSON() as { email?: string; role?: string }
       return route.fulfill({ json: { invite_id: 'synthetic-invite', raw_token: 'synthetic-one-time-token', expires_at: '2026-10-17T10:00:00Z' } })
@@ -122,7 +132,7 @@ test('hosted owner: member management screen renders and creates a one-time invi
     await opener.click()
     await expect(dialog).toBeVisible()
     await expect(dialog.getByText('owner@example.test')).toBeVisible()
-    await expect(dialog.getByText('editor@example.test')).toBeVisible()
+    await expect(dialog.getByText('editor@example.test', { exact: true })).toBeVisible()
     const evidence = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
     expect(evidence.violations).toEqual([])
     await page.screenshot({ path: test.info().outputPath(`members-${suffix}.png`), fullPage: true })
@@ -131,6 +141,15 @@ test('hosted owner: member management screen renders and creates a one-time invi
     await dialog.getByRole('button', { name: 'Crear invitación' }).click()
     await expect(dialog.getByText('synthetic-one-time-token')).toBeVisible()
     expect(inviteRequest).toEqual({ email: 'new-member@example.test', role: 'VIEWER' })
+    if (width === 1280) {
+      await dialog.getByLabel('Rol de editor@example.test').selectOption('VIEWER')
+      await expect(dialog.locator('.member-list').getByText('Viewer · solo lectura')).toBeVisible()
+      expect(roleUpdate).toEqual({ role: 'VIEWER' })
+      await dialog.getByRole('button', { name: 'Revocar acceso a editor@example.test' }).click()
+      await dialog.getByRole('button', { name: 'Confirmar' }).click()
+      await expect(dialog.getByText('editor@example.test', { exact: true })).toHaveCount(0)
+      expect(revokedMember).toBe('editor-1')
+    }
     await dialog.locator('.dialog-head').getByRole('button', { name: 'Cerrar' }).click()
   }
 

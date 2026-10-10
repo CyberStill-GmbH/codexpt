@@ -1,5 +1,20 @@
 # Verification strategy
 
+## Current release-candidate snapshot (2026-10-10)
+
+The latest local UI and backend changes were verified in the `C:\projects\codexpt` worktree. These checks do not certify live OIDC, hosted authorization, or a public deployment.
+
+- Rust: 37 tests passed; `cargo fmt --check` and `cargo clippy --all-targets --all-features --locked -- -D warnings` passed.
+- Web: `npm --prefix web run lint`, `npm --prefix web run test` (6 tests), and production build passed.
+- Browser: `npm --prefix web run test:e2e` passed 12 Playwright cases. Member-management requests use synthetic API fixtures.
+- Impeccable detector reported no findings for the changed dashboard files.
+- `scripts/container-smoke.ps1` passed against the digest-pinned `codexpt:release-candidate` image (40,799,046 bytes). It verifies the non-root UID 10001, a read-only root filesystem, missing and read-only `/data` rejection, SQLite-aware readiness, and embedded frontend HTTP 200.
+- The smoke test bootstraps a synthetic Owner and starts 50 synthetic SQLite writes. SIGTERM stopped the container with exit code 0; 8 committed tasks and the Owner identity survived restart, while in-flight writes stopped. A consistent backup restored to a new database path with all 8 tasks. The script removes only its unique disposable containers and volumes; the built image remains cached locally.
+- Rust readiness tests also verify that an unavailable identity database returns HTTP 503. Container checks use a synthetic OIDC issuer and identity: they prove local packaging, storage, shutdown, and backup mechanics only, not live OIDC or hosted platform behavior.
+- No Railway service, DNS, certificate, or cloud resource has been created or modified.
+
+Remaining hosted release gates are tracked in [`deployment/PLAN.md`](deployment/PLAN.md) and [`identity-v1/AUTHORIZATION-TEST-PLAN.md`](identity-v1/AUTHORIZATION-TEST-PLAN.md). Railway is not linked in this CLI workspace, and its account billing/usage is unverified.
+
 ## Required gates
 
 Run before each commit and release candidate:

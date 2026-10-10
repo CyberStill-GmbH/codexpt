@@ -179,6 +179,16 @@ impl IdentityStore {
         Ok(Self { pool })
     }
 
+    pub async fn ping(&self) -> Result<(), IdentityError> {
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn close_for_test(&self) {
+        self.pool.close().await;
+    }
+
     pub async fn provision_identity(
         &self,
         issuer: &str,

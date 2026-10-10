@@ -1,0 +1,16 @@
+.git
+.github
+.impeccable
+target
+web/node_modules
+web/test-results
+web/playwright-report
+web/coverage
+.codexpt
+.env
+.env.*
+!.env.example
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
