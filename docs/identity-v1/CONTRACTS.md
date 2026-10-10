@@ -4,7 +4,7 @@ These are implementation constraints, not evidence that authentication exists. N
 
 ## Trusted principal
 
-Only the session-verification adapter may construct a hosted `AuthenticatedPrincipal`. Client-supplied `actor`, `role`, `user_id`, `workspace_id`, issuer, or subject fields are never evidence of identity or permission.
+Only the session-verification adapter may construct a hosted `AuthenticatedPrincipal`. Client-supplied `actor`, `role`, `user_id`, `workspace_id`, issuer, or subject fields are never evidence of identity or permission. OIDC/Cognito establishes an external identity; only CodeXPT's current workspace membership establishes `OWNER`, `EDITOR`, or `VIEWER`. Provider groups/claims do not confer CodeXPT roles.
 
 ```text
 AuthenticatedPrincipal {
@@ -60,11 +60,21 @@ Required actions: `workspace.read`, `workspace.update`, `member.invite`, `member
 
 Every lookup of a task, decision, message, evidence reference, or event must be constrained by the authorized `workspace_id`; checking membership only on a parent page is insufficient. `OWNER` does not imply platform-wide admin privileges.
 
+## Final human approval invariant
+
+`decision.approve` requires all of the following in one server-side authorization and transaction:
+
+- A verified `AuthenticatedPrincipal` from an active human session; a client label, agent, local-only principal, or provider connection is insufficient for hosted approval.
+- The principal has a current `OWNER` membership in the same `workspace_id` as the decision and task. Owner in one workspace grants no access to another.
+- The decision is pending and the task is in the expected state. The request carries an expected resource version; stale state is rejected without changing the task.
+- The approval is bound to the pending decision and its evidence references. The event stores the authenticated internal user id, session id, workspace/resource ids, expected version, evidence references, timestamp, correlation/causation ids, and resulting version.
+- The state transition, approval event, and audit event commit atomically. Role membership comes from CodeXPT storage at authorization time, not Cognito or request data.
+
 ## OIDC browser endpoints
 
 - `GET /auth/login`: generate cryptographically random one-use `state`, `nonce`, and PKCE verifier/challenge; store expiring transaction (max 5 minutes) server-side; redirect only to configured issuer and fixed callback.
 - `GET /auth/callback`: require matching unexpired one-use state; exchange code server-side; validate signature via issuer JWKS, exact issuer, client audience, nonce, time claims, allowed algorithm, and code verifier; resolve account by `(issuer, sub)`; reject unprovisioned/disabled users without creating a public account.
-- On successful callback: rotate/create the session, log the event, set a host-only `__Host-cxpt-session` cookie with `Secure; HttpOnly; SameSite=Lax; Path=/`, and redirect to a fixed configured Vercel URL. Never accept an arbitrary `return_to` URL.
+- On successful callback: rotate/create the session, log the event, set a host-only `__Host-codexpt_session` cookie with `Secure; HttpOnly; SameSite=Lax; Path=/`, and redirect to a fixed configured Vercel URL. Never accept an arbitrary `return_to` URL.
 - `GET /api/session`: return only a minimal profile, CSRF token, workspace ids, and server-derived role/capabilities. Never return OIDC ID, access, or refresh tokens.
 - `POST /auth/logout`: require session + CSRF + allowed Origin, revoke session in SQLx storage, expire cookie. Also support owner/security-driven revocation.
 - All JSON mutation routes: require a valid server-side session, exact allowed Origin, CSRF token tied to session, and workspace authorization before any read/mutation that could disclose protected data.
@@ -73,7 +83,7 @@ Every lookup of a task, decision, message, evidence reference, or event must be 
 
 - Generate at least 256 bits from the OS CSPRNG; send raw value only in the cookie; store a keyed digest or cryptographic hash, never a reversible plaintext token.
 - Rotate at login, reauthentication, account recovery, and any privilege/role change. Old session id is invalidated atomically.
-- Enforce idle and absolute expiration server-side, even if the browser still sends the cookie. Proposed initial values for review: 30-minute idle, 12-hour absolute; do not extend absolute expiry on activity.
+- Enforce idle and absolute expiration server-side, even if the browser still sends the cookie. Initial approved values: 30-minute idle, 12-hour absolute; do not extend absolute expiry on activity.
 - Store `created_at`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, and user id. Do not bind hard to IP; record a minimal user-agent fingerprint only if the security review finds a purpose.
 - OIDC transaction state is single-use and expires quickly; delete consumed/expired transaction records.
 
@@ -83,4 +93,4 @@ Identity events include `event_id`, `occurred_at`, `actor_user_id` or explicit `
 
 ## Persistence contract
 
-SQLx adapters for SQLite and PostgreSQL must pass the same repository/authorization integration suite. Hosted SQL must use transactions for membership changes and final approval, enforce foreign keys and uniqueness, and include `workspace_id` in scoped queries and relevant composite indexes. SQLite remains the no-network local mode; hosted sessions cannot rely on Lambda memory, a local container filesystem, or one warm process.
+SQLx adapters for SQLite and PostgreSQL must pass the same repository/authorization integration suite. Hosted SQL must use transactions for membership changes and final approval, enforce foreign keys and uniqueness, and include `workspace_id` in scoped queries and relevant composite indexes. SQLite remains the no-network local mode. Session lookup, expiry, and revocation use the shared hosted store and work on every API instance; sessions cannot rely on Lambda memory, a local container filesystem, or one warm process. Before choosing a multi-instance/Lambda runtime, validate shared-pool connection limits, revocation behavior, and cost.

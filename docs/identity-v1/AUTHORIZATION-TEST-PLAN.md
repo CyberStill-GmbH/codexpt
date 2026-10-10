@@ -26,13 +26,14 @@ This is an executable test specification for the future implementation. It is no
 | Logout then replay former cookie | 401. |
 | OIDC error or `return_to` with external URL | Fixed safe error/return route; no open redirect. |
 | Legacy event migration sees `human:cesar` or `agent:codex` | Preserve original assertion as unverified; never bind to a human or agent record. |
+| Cognito token contains an `OWNER`/`EDITOR`/`VIEWER` group/claim | Ignore it for CodeXPT authorization; only current SQLx workspace membership applies. |
 
 ## CSRF and browser boundary
 
 - Credentialed CORS succeeds only for exact configured production origin; reject `*`, `null`, untrusted sibling/subdomain, Vercel preview URL, and wrong scheme/port.
 - Mutating request without CSRF token, with token from another session, missing Origin, or Origin mismatch is rejected before reading/mutating tenant resources.
 - Missing/wrong Host, unsupported content type, oversized JSON, and method override are rejected.
-- The session cookie has `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, `__Host-` prefix and no `Domain`; provider tokens never enter JS storage, URLs, logs, or API response.
+- The session cookie is named `__Host-codexpt_session` and has `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, and no `Domain`; provider tokens never enter JS storage, URLs, logs, or API response.
 
 ## Role matrix and IDOR
 
@@ -48,12 +49,16 @@ For each role, test every action in `docs/identity-v1/CONTRACTS.md`:
 - Call nested endpoint with valid workspace but resource from another workspace, and vice versa; both deny.
 - Remove/downgrade membership while session remains active; next request denies immediately.
 - Only an Owner with current membership can approve a resolved task with its pending/answered decision; Viewer, Editor, agent, anonymous, and revoked users cannot.
+- An authenticated Owner from workspace A cannot approve or infer resources in workspace B without current B membership.
+- Approval without an expected version, matching pending decision, or evidence references is rejected; stale versions cause no partial state/event writes.
+- Approval event records verified internal user id, session id, workspace/resource, expected/result versions, evidence references and causal ids; forged request values cannot replace server values.
 
 ## Atomicity, races, and audit
 
 - Concurrent owner role changes cannot create two Owners accidentally unless policy explicitly allows; no lost update.
 - Approval plus event insert commits together or both roll back; retry with same idempotency key has one effect.
 - Session revocation and membership removal are transactional with audit events.
+- A session created on API instance 1 is recognized/revoked on instance 2 through shared hosted persistence; restart or scale-out never resurrects a revoked/expired session.
 - Audit entries identify internal user/session/workspace and correlation/causation ids; assert logs exclude secrets, token material, password, raw cookie, PKCE verifier, and CSRF token.
 - Denial response does not distinguish non-existent from foreign-tenant resource where that would reveal resource existence.
 

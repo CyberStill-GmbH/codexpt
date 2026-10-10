@@ -15,7 +15,7 @@
 
 ## Identity v1 design (in progress)
 
-The review-approved direction is Rust + SQLx, verified identity, secure sessions, workspace RBAC (`OWNER`, `EDITOR`, `VIEWER`), and independent identity/application boundaries. Proposed provider: Cognito Essentials, pending final review. Design, contracts, threat model, and authorization test plan are in `docs/identity-v1/` and ADR-0004. Keep local SQLite working. Do not enable public self-registration or deploy to AWS in this phase. Agent integrations remain separate.
+The delegated review approved Cognito Essentials as the invite-only OIDC provider candidate, CodeXPT-owned workspace RBAC, SQLx with SQLite local/PostgreSQL hosted adapters, server-side sessions (30-minute idle/12-hour absolute), and distinct human/agent/provider identities. Three review adjustments are incorporated in ADR-0004 and `docs/identity-v1/`: Cognito does not grant roles, approvals bind a verified human to workspace/resource/version/evidence, and session revocation uses shared persistence. Keep local SQLite working. Do not enable public self-registration or deploy to AWS in this phase. Agent integrations remain separate.
 
 ## Explicitly out of current scope
 
