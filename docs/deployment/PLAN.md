@@ -1,6 +1,8 @@
-# CodeXPT private beta deployment plan
+# CodeXPT hosting and deployment plan
 
-**Status (2026-10-10): prepared, not deployable, and over the current hosting ceiling.** The Terraform AWS topology below has an estimated fixed baseline of US$17.51/month, so it does not satisfy the current maximum of US$1/month for beta hosting/platform. Do not use this topology as the beta target while that ceiling remains in effect. The Workers/D1 alternative is only an isolated compatibility spike; no migration is approved. The public GitHub repository is `CyberStill-GmbH/codexpt`. The Vercel `codexpt` project exists and has `codexpt.jappi.net.pe` assigned, but no production deployment has been made. Vercel Hobby is not assumed to permit commercial use. No AWS resources, public DNS changes, or certificates have been created. The current identity test plan still has release-blocking verification gaps, and there is no immutable Linux ARM64 artifact or deployable AWS plan. `terraform apply` is out of scope until the hosting decision, release gates and exact plan are reviewed.
+**Status (2026-10-10): local MVP verified; hosted deployment is not release-ready.** The AWS EC2 design below costs an estimated US$17.51/month before variable charges. Since César already pays for Railway Hobby, the current cost-first candidate is one Railway service running the existing Rust/Axum application with SQLite on a persistent volume. Railway reports a US$5/month Hobby subscription that includes US$5 of resource usage; whether CodeXPT adds any invoice amount depends on the account's existing consumption and actual app measurements. The Railway account balance and usage have not been inspected. AWS resources, DNS and certificates have not been changed. Authentication, backup/restore and hosted authorization gates remain open, so do not expose this MVP publicly yet. The old AWS Terraform stack is not the cost-first plan and must not be applied under a sub-US$1 incremental target.
+
+ChatGPT reviewed the Railway/AWS comparison and recommended preparing Railway packaging first, without creating services or changing DNS. See [the cost decision](#cost-decision-railway-vs-aws) and [ADR-0007](../adr/0007-workers-d1-hosting-spike.md) for the separate Workers/D1 alternative.
 
 ## Target topology
 
@@ -33,6 +35,35 @@ Reference is 730 hours/month, us-east-1, Linux on-demand, no free-tier or accoun
 | **Fixed baseline** | before usage-dependent items | **$17.51** |
 
 S3 backup bytes/requests, outbound data, Cognito usage above any eligible free tier, and sustained T4g CPU surplus can add cost. Caddy certificates have no certificate fee. The configured $20 monthly budget sends actual/forecast notifications; it does not stop resources or cap charges. Recheck current line items in AWS Pricing Calculator immediately before an apply. Sources: [AWS Price List API](https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/Welcome.html), [VPC public IPv4 pricing](https://aws.amazon.com/vpc/pricing/), [EBS pricing](https://aws.amazon.com/ebs/pricing/), [T4g instance specifications and CPU credits](https://aws.amazon.com/ec2/instance-types/t4/), [AWS Pricing Calculator](https://calculator.aws/).
+
+## Cost decision: Railway vs AWS
+
+The AWS figures above are the cost of the current `infra/terraform` topology, not a Terraform estimate for Railway. Terraform only manages the EC2-based AWS deployment today. Reducing its EC2 size cannot bring that always-on architecture below US$1/month: the instance, public IPv4 and EBS each have recurring charges. AWS Lightsail is simpler but starts at US$5/month for a Linux/Unix IPv4 bundle with 0.5 GB RAM, 20 GB storage and 1 TB transfer. Its IPv6-only Nano is US$3.50/month and is not the default recommendation for a public product because client-network reachability needs validation. See the [official Lightsail bundle prices](https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-bundles.html).
+
+**Recommendation: Railway-only for the CodeXPT application, as one same-origin service.** Reuse the already-paid Railway Hobby plan rather than maintain a second AWS stack. The Rust server already embeds the built frontend, so the browser UI and API can use one HTTPS origin, one service, and one SQLite volume. This avoids cross-origin session-cookie and CORS configuration. Keep Vercel out of the application request path for this beta; it can host a separate marketing page or preview if needed, but it does not need to proxy the API.
+
+The lowest incremental-cost path is:
+
+- Keep one Rust/Axum service and one SQLite database on a persistent Railway volume; no managed database or second API service is needed for this single-writer beta.
+- Railway's published Hobby plan is US$5/month and applies up to US$5 of measured service usage toward that subscription. Its current published usage rates are RAM US$10/GB-month, CPU US$20/vCPU-month, outbound transfer US$0.05/GB and volume storage US$0.15/GB-month. A measured light-usage scenario can fit inside the included US$5, but this is not a guarantee or a measured CodeXPT bill. See [Railway plan and usage pricing](https://docs.railway.com/pricing/plans).
+- ChatGPT's illustrative scenario was about US$2.33/month of CodeXPT resource use (about 200 MiB average RAM, 0.01 vCPU average, 0.5 GB volume and 1 GB egress). The value must be measured in Railway for at least a week and added to the usage of the other existing services. The incremental amount is `max(5, existing + CodeXPT) - max(5, existing)`; therefore US$0 additional is possible while the combined resource consumption stays within the subscription credit, but **under US$1 additional cannot be promised without inspecting actual usage and remaining credit**.
+- Railway supports a compute usage hard limit that stops all workloads in the selected workspace after the configured compute limit is reached. This is a cost control with an availability tradeoff, not a per-service-only AWS budget; setting it without reviewing every workload in that workspace could shut down unrelated projects. Do not change workspace-wide limits as part of this repository task. See [Railway cost controls](https://docs.railway.com/pricing/cost-control).
+- Do not use a Vercel-to-Railway hybrid for the beta unless a product requirement demands independently deployed frontend assets. The app already embeds the UI, and its API base defaults to same-origin; a split adds cross-origin cookie, CORS, and deployment coordination without lowering the Railway subscription cost.
+- Use the provider's generated HTTPS domain for an isolated staging validation first. Do not change `jappi.net.pe` DNS until identity and authorization tests pass and all existing records have been inventoried.
+
+Railway **does not make the app free**: the existing US$5 subscription remains part of total household/business spend, and resource usage above the included amount is billed. A Railway usage hard limit suspends workloads when reached, so its safety is balanced against downtime. The selected scope is a private, single-instance beta with an export/backup and restore procedure, not a highly available production service. This is the recommended cost path, not deployment approval; production remains blocked on the readiness gates below.
+
+## Deployment readiness gates
+
+Before creating a Railway service or publishing a public URL, prepare and verify:
+
+1. A reproducible multi-stage Rust/frontend container build and explicit start/bind configuration; current local mode intentionally listens on loopback.
+2. One persistent volume mounted at the exact SQLite database path, one replica, tested graceful shutdown and restart, plus a consistent SQLite backup and restore independent of the live file.
+3. Real OIDC login, callback/host/origin values, session cookie behavior, CSRF/CORS and the full Owner/Editor/Viewer/cross-workspace authorization matrix against an isolated hosted environment.
+4. A production build and E2E test against the selected host with synthetic users/data, no secrets in logs, and a documented rollback.
+5. A review of Railway workspace plan, current usage, other services, and a cost limit that accounts for workspace-wide shutdown effects. Measure the deployed service for at least a week before asserting a recurring incremental cost.
+
+Only after these gates pass should a hosted beta plan be produced. Keep Terraform AWS as an explicitly higher-cost alternative; do not create a second backend or database merely to split the UI from the API without a measured reason.
 
 ## Bootstrap and operations
 
