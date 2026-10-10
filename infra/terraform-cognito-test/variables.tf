@@ -19,7 +19,7 @@ variable "user_pool_domain_prefix" {
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9-]{1,40}$", var.user_pool_domain_prefix))
-    error_message = "Use a unique Cognito domain prefix with lowercase letters, numbers, and hyphens only."
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$", var.user_pool_domain_prefix))
+    error_message = "Use a unique Cognito domain prefix of 1-40 lowercase letters, numbers, and interior hyphens; it must start and end alphanumerically."
   }
 }

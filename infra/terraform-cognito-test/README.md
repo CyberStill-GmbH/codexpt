@@ -13,7 +13,7 @@ The HTTP callback is permitted solely for Cognito loopback testing. Do not add a
 
 ## Review and provision
 
-Use an AWS identity explicitly authorized for a dedicated CodeXPT test pool. Do not use a QAPAQ deployment role. Set the expected 12-digit account ID in `terraform.tfvars`; the AWS provider rejects credentials for a different account before planning. The state is local and should be stored safely; it contains infrastructure identifiers but no client secret or user password.
+Use an AWS identity explicitly authorized for a dedicated CodeXPT test pool. Do not use a QAPAQ deployment role. Before Terraform, run `aws sts get-caller-identity` and verify both the account ID and that the ARN is the dedicated CodeXPT test role. `allowed_account_ids` prevents selecting a different account; it does not distinguish roles within the same account. Set the expected 12-digit account ID in `terraform.tfvars`; the AWS provider rejects credentials for a different account before planning. The state is local and should be stored safely; it contains infrastructure identifiers but no client secret or user password.
 
 ```powershell
 Copy-Item terraform.tfvars.example terraform.tfvars
@@ -61,4 +61,10 @@ Verify login, `/api/auth/me`, logout, and rejection of the former session. Do no
 
 ## Teardown
 
-The pool has deletion protection enabled. To remove it, first inspect an isolated plan that changes only this test pool's `deletion_protection` to `INACTIVE`, apply that reviewed change, then separately review a destroy plan for only these three Cognito resources. Cognito requires the associated domain to be deleted before the pool. Preserve the local Terraform state until deletion is verified. Never point `terraform destroy` at the AWS deployment root to clean up this test.
+The pool has deletion protection enabled. Teardown requires two separate reviewed operations and explicit operator approval for each:
+
+1. Review a plan that changes only this test pool's `deletion_protection` from `ACTIVE` to `INACTIVE`. Stop if the plan includes another change. Apply only that reviewed change.
+2. Review a separate destroy plan. It must destroy exactly these three Cognito resources; stop if it includes an extra resource or unexpected replacement. Cognito requires the associated domain to be deleted before the pool.
+3. Preserve the local Terraform state until AWS confirms deletion of all three resources. Do not delete the state file as a substitute for destroying infrastructure.
+
+Never point `terraform destroy` at the AWS deployment root to clean up this test.
