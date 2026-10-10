@@ -8,8 +8,8 @@ Give invited CodeXPT users a quiet, legible entrance into a serious review and a
 
 ## Reference observations
 
-- Vercel's sign-in flow keeps the entry point compact and makes the next step explicit, with provider choices presented as actions.
-- Linear documents a small set of authentication methods and keeps workspace access policy separate from the visual login.
+- [Vercel's sign-in flow](https://vercel.com/login) keeps the entry point compact and makes the next step explicit, with provider choices presented as actions.
+- [Linear's login-method guidance](https://linear.app/docs/login-methods) documents a small set of authentication methods and keeps workspace access policy separate from the visual login.
 - These are interaction references only. Do not copy their layout, wording, logos, colors, or assets. CodeXPT should continue the existing dashboard identity instead of imitating another product.
 
 ## Tokens
