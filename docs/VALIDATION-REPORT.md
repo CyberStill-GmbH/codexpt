@@ -3,19 +3,21 @@
 ## Current release-candidate status — 2026-10-10
 
 **Source:** `main` release-candidate snapshot; this report records local verification, not a hosted deployment.
-**Status:** local quality gates pass; hosted public release is still blocked on live OIDC, the complete HTTP authorization/CSRF matrix, persistent-volume restore proof, hosted E2E, and an inspected Railway account/cost baseline.
+**Status:** local Rust and HTTP authorization/CSRF gates pass; hosted private-beta validation is still blocked on real Cognito OIDC, the exact hosted browser origin, Railway volume/restore proof, hosted E2E, and an inspected Railway account/cost baseline.
+
+An isolated Cognito-only Terraform root now exists at `infra/terraform-cognito-test`. It registers only the local `127.0.0.1:4173` callback and creates a dedicated pool, public app client, and managed-login domain; it has not been planned or applied because the CLI has no authorized CodeXPT AWS identity. Live Cognito OIDC remains unverified.
 
 | Area | Current result |
 |---|---|
-| Rust | 39 tests passed; `cargo fmt --check` and Clippy with warnings denied passed |
+| Rust | 52 tests passed, including authorization/CSRF matrix and loopback-mode guard cases; `cargo fmt --check` and Clippy with warnings denied passed |
 | Frontend | 6 Vitest tests; lint/build passed |
 | Browser E2E | 12 Playwright cases passed; includes responsive layout and Owner role/revocation flow with synthetic fixtures |
 | Accessibility | Axe reported no violations in the audited E2E routes; this is not certification |
 | Impeccable UI detector | No findings on the changed dashboard targets |
-| Container | 40.8 MB image, pinned base digests, non-root UID 10001 and read-only root filesystem; repeatable smoke passed (rejects missing/read-only `/data`, unsafe DB paths and symlink escapes before external side effects; task-store readiness, frontend HTTP 200, SIGTERM exit 0, 8 confirmed task IDs survive concurrent writes and restart, SQLite integrity check passes, backup/restore preserves the exact complete task ID set) |
+| Container | The baseline image/smoke at commit `01ec692` passed. Rebuilding after the loopback-entrypoint change is **unverified**: Docker could not resolve `index.crates.io` from its build container, so the image did not finish building and the updated release-entrypoint check did not run. |
 | Cloud | No Railway service/domain, AWS resources, DNS, or certificate changed |
 
-Container verification is reproducible with `scripts/container-smoke.ps1` and used only a synthetic OIDC issuer and identity; it does not establish live provider authentication. The browser member-management flow uses synthetic API fixtures and does not establish production authorization. Railway CLI reports that no project is linked in this workspace. The reported Hobby plan and any monthly cost remain unverified against the account. The UI tests do not prove invitation email delivery or the complete HTTP authorization matrix.
+The prior `scripts/container-smoke.ps1` result used a synthetic OIDC issuer and identity; it does not establish live provider authentication. The current rerun stopped during `cargo build` in Docker because the builder could not resolve `index.crates.io`; no result is claimed for the new release-entrypoint rejection. The local SQLite-backed Axum router now has role, anonymous, cross-workspace, invitation lifecycle, session revocation/logout, and CSRF/Host/Origin negative/positive tests. These tests do not establish real Cognito compatibility or hosted browser behavior. The browser member-management flow uses synthetic API fixtures and does not establish production UI integration. Railway CLI reports that no project is linked in this workspace. The reported Hobby plan and any monthly cost remain unverified against the account. Invitation email delivery and hosted E2E are unverified.
 
 Historical reports below retain results from earlier snapshots; their test counts and branch names do not describe this candidate.
 
@@ -67,6 +69,6 @@ Playwright regenerated login, invitation, empty workspace, member management, an
 
 The E2E suite covers the OpenAI-configured sign-in label and explicit CodeXPT role copy, accessible responsive flows, long review titles at 320/390/768/1280 px, member-dialog focus handling and logo/favicon routing. The 5 Vitest tests, frontend lint/build, CLI smoke and the Rust suite passed. The build emitted 262.46 kB JavaScript (80.70 kB gzip) and 26.41 kB CSS (6.14 kB gzip). The first parallel clippy/E2E attempt overlapped a Vite build replacing tracked embedded assets; serial reruns passed. This report records the clean serial results.
 
-Terraform validation is syntax/provider validation only. No plan, apply, AWS resource, Vercel deployment, DNS or certificate change was made. No live OpenAI OAuth client has been issued/registered, so the OpenAI website sign-in flow has not been exercised with a real account. The dashboard's identity/invitation tests still use local or synthetic identity responses.
+Terraform validation is syntax/provider validation only. No plan, apply, AWS resource, Vercel deployment, DNS or certificate change was made. The accepted provider decision is now a dedicated Cognito User Pool for the invite-only beta; no live pool or client has been provisioned or tested. CodeXPT has no OpenAI-issued/authorized website OAuth client, so ChatGPT sign-in has not been exercised and is not the selected beta identity provider. The dashboard's identity/invitation browser tests still use local or synthetic identity responses.
 
 ChatGPT reviewed the proposed agent workflow in the exact authorized conversation. Its decisions are recorded in [ADR-0006](adr/0006-local-agent-runner-inbox.md) (user-controlled Codex runner, durable inbox, outbound polling, no agent approval) and [ADR-0007](adr/0007-workers-d1-hosting-spike.md) (retain the reference backend and test Workers/D1 in isolation). These ADRs are specifications, not implementation evidence. Pairing, agent credentials, job leases, MCP tools, OAuth consent for a local runner, and the Workers/D1 spike remain unimplemented. No autonomous two-agent collaboration or no-additional-API-cost flow has yet been demonstrated.

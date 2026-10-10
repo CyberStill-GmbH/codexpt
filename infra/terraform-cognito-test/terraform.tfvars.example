@@ -1,0 +1,3 @@
+# Choose a globally unique prefix, for example codexpt-oidc-<your-initials>-test.
+aws_account_id          = "123456789012" # Replace with the dedicated CodeXPT test account ID.
+user_pool_domain_prefix = "codexpt-oidc-change-me-test"

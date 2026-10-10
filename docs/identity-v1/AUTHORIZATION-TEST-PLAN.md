@@ -9,25 +9,27 @@ Covered locally by Rust tests and browser fixtures in the current release candid
 - Opaque server-side sessions, idle expiration and revocation.
 - Stable `(issuer, subject)` mapping; new identities require a verified email with a pending invite.
 - OIDC transaction state is hashed, expiring, and one-use; invite token is hashed, one-use, and email matched.
-- Owner-only membership mutations, transfer, last-Owner protection, and workspace-level task isolation.
+- Owner-only membership mutations, transfer, last-Owner protection, and workspace-level task isolation. Local router tests now cover successful Owner invite/change/revoke/transfer flows, Editor restrictions, Viewer denial, anonymous denial, and cross-workspace resource IDs.
 - Membership role changes, revocation, and ownership transfer revoke active sessions transactionally at the store layer.
-- A controlled local OIDC provider completes the callback with an RSA/JWKS signing key; the test exercises PKCE verifier handling, signed-token validation, one-use state, nonce rejection, callback replay rejection, and session-cookie creation. No production OIDC provider has been selected, configured, or tested yet.
+- A controlled local OIDC provider completes the callback with an RSA/JWKS signing key; tests exercise PKCE, signed-token validation, wrong issuer/audience/signature/expiry, one-use state, nonce rejection, callback replay rejection, and secure session-cookie creation. Cognito is selected in ADR-0008 but has not been configured or tested live.
+- The explicit Cognito loopback-test configuration validates only `127.0.0.1` and exact callback/origin/host/port matches; the release-container entrypoint rejects the flag. This validates the guard code only, not an actual Cognito login.
 - Identity audit records link successful login/logout and Owner invite actions to internal session ids; verified task creation, messages, decisions, and transitions record authenticated user/session provenance in event details.
 - SQLite's online backup API creates a consistent backup, and an automated restore test checks restored tasks, messages, ordered events, and refusal to overwrite an existing destination.
-- Protected task routes require a live session, membership, CSRF token, and selected workspace. Editor approval is denied; Owner approval binds user, session, workspace, task version, evidence, and timestamp.
-- A Viewer can read tasks but cannot create tasks or invitations at the HTTP boundary. This is a partial role matrix; other Viewer writes, Editor actions, cross-workspace combinations, and live session changes still need coverage.
+- Protected task and workspace routes require a live session, current membership, selected workspace, and (for writes) a matching CSRF cookie/header plus exact allowed Host and Origin. The route tests exercise all current task-write routes, workspace membership writes, invitation acceptance, logout, and denials before side effects.
+- The local HTTP matrix covers Owner approval and membership administration; Editor create/propose/request/answer and rejection of approval/admin actions; Viewer reads and rejection of every task/workspace write; anonymous read/write rejection; real foreign-workspace task IDs; immediate session revocation after membership changes; invitation expiry/replay; and logout/session replay. An initial mismatch where the handler rejected Editor decision answers despite the contract was fixed and is now covered.
+- CSRF coverage includes missing/wrong cookie or header, another session's token, absent or altered Origin (host/scheme/port), wrong Host, and unsupported content type. Secure host-only OIDC session cookie flags are asserted by the controlled-provider callback test.
 - Owner member UI can change an Editor/Viewer role and revoke a member with confirmation. Playwright covers the UX using synthetic API fixtures; it is not evidence of live HTTP authorization.
 - Existing local actor labels and out-of-scope task rows remain unchanged; workspace-scoped queries do not disclose them.
 
 Not yet verified or implemented to release standard:
 
-- Real-provider callback/browser behavior, provider error and wrong-issuer/audience/signature test cases, and production provider configuration.
-- Expired invitation, full Owner/Editor/Viewer HTTP route matrix, and session revocation behavior across all membership operations at the HTTP boundary.
-- Full audit action/denial coverage and independent review of audit retention/tamper boundaries. PostgreSQL parity remains out of scope for the approved single-instance SQLite beta, but the shared database file and lock/backup behavior must be validated under a running API.
-- Browser CSRF/CORS behavior on the selected hosted origin, multi-instance shared-store behavior (not required for the one-instance beta), and hosted end-to-end verification.
+- Real-provider callback/browser behavior; wrong-algorithm and provider-error cases against the chosen provider; and production Cognito configuration.
+- Real Cognito discovery/token exchange and browser behavior; wrong issuer/audience/signature/algorithm/expiry cases against the actual provider; exact hosted callback/domain; and hosted logout/session-cookie behavior. Controlled-provider and loopback-configuration tests are not live-provider proof.
+- Full audit action/denial coverage and independent review of audit retention/tamper boundaries. PostgreSQL parity and multi-instance shared-store behavior remain out of scope for the approved one-instance SQLite beta; the shared database file and lock/backup behavior still need a hosted rehearsal.
+- Browser CSRF/CORS behavior on the selected hosted origin, live invitation email/operator delivery, and hosted end-to-end verification.
 - The Owner member/invitation UI has local synthetic-fixture coverage; the live OIDC login/callback/invitation flow and complete responsive/keyboard/Axe pass against the hosted identity provider remain.
 
-The task store uses rusqlite while the identity adapter uses SQLx against the same SQLite file for the proposed one-instance beta. Setting a separate PostgreSQL `CODEXPT_DATABASE_URL` while OIDC is enabled is explicitly rejected. Do not expose or deploy this candidate until the remaining verification list passes.
+The task store uses rusqlite while the identity adapter uses SQLx against the same SQLite file for the proposed one-instance beta. Setting a separate PostgreSQL `CODEXPT_DATABASE_URL` while OIDC is enabled is explicitly rejected. The HTTP role/CSRF gate now passes locally but hosted OIDC and browser gates remain open. Do not expose or deploy this candidate until the remaining verification list passes.
 
 ## Fixtures
 
@@ -37,7 +39,7 @@ The task store uses rusqlite while the identity adapter uses SQLx against the sa
 - One open/proposed/reviewed/resolved task, pending decision, messages, evidence refs, and ordered audit events in each workspace.
 - Valid, revoked, idle-expired, absolute-expired, and rotated sessions; wrong-issuer and unprovisioned identities.
 - Legacy events carrying `human:cesar`, `agent:codex`, and arbitrary actor strings; distinct human, agent, provider-connection, and system references.
-- Run the same repository contract suite against SQLite and PostgreSQL adapters.
+- For Identity v1, run the repository contract suite against the approved single SQLite file. PostgreSQL adapter parity is future work, not a beta acceptance gate.
 
 ## Authentication and session
 

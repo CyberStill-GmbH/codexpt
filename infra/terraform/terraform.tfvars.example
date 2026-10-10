@@ -5,6 +5,7 @@ app_release_sha256 = "0000000000000000000000000000000000000000000000000000000000
 budget_alert_email = "owner@example.invalid"
 monthly_budget_usd = 20
 identity_provider = "cognito"
-# After OpenAI issues an OAuth client ID and registers the exact API callback,
-# switch identity_provider to "openai" and set openai_client_id. The ID is public.
+# Cognito is the selected provider for the invite-only beta. OpenAI website
+# sign-in is unavailable until OpenAI authorizes a CodeXPT client and a separate
+# product decision accepts that dependency.
 # openai_client_id = "oaiapp_..."

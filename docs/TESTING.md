@@ -4,13 +4,14 @@
 
 The latest local UI and backend changes were verified in the `C:\projects\codexpt` worktree. These checks do not certify live OIDC, hosted authorization, or a public deployment.
 
-- Rust: 39 tests passed; `cargo fmt --check` and `cargo clippy --all-targets --all-features --locked -- -D warnings` passed.
+- Rust: 52 tests passed, including Owner/Editor/Viewer and anonymous HTTP authorization, cross-workspace resource IDs, invite expiry/replay, membership/session revocation, logout, CSRF/Host/Origin rejection, controlled OIDC wrong-issuer/audience/signature/expiry cases, and loopback-mode bind/callback validation. `cargo fmt --check` and Clippy with warnings denied passed.
 - Web: `npm --prefix web run lint`, `npm --prefix web run test` (6 tests), and production build passed.
 - Browser: `npm --prefix web run test:e2e` passed 12 Playwright cases. Member-management requests use synthetic API fixtures.
 - Impeccable detector reported no findings for the changed dashboard files.
-- `scripts/container-smoke.ps1` passed against the digest-pinned `codexpt:release-candidate` image (40,802,236 bytes). It verifies non-root UID 10001, read-only root filesystem, missing/read-only `/data` rejection, relative/out-of-volume/traversal/symlink-escape DB path rejection, task-store readiness, and embedded frontend HTTP 200.
+- At baseline commit `01ec692`, `scripts/container-smoke.ps1` passed against the digest-pinned `codexpt:release-candidate` image (40,802,236 bytes). That run verified non-root UID 10001, read-only root filesystem, missing/read-only `/data` rejection, relative/out-of-volume/traversal/symlink-escape DB path rejection, task-store readiness, and embedded frontend HTTP 200. It predates the latest entrypoint guard.
 - The smoke test commits 8 synthetic tasks before SIGTERM, then starts a concurrent writer. All 8 confirmed IDs and the Owner identity survive restart with no duplicate task IDs; SQLite `db-check` reports `ok`. It compares the complete task ID set before and after online backup/restore and verifies that the restored database also passes `db-check`. The run reported 14 tasks, but the concurrent-write total can vary. A symlink-escape case also confirms validation rejects the path before creating anything in the external target. The script removes only its unique disposable containers and volumes; the built image remains cached locally.
 - Rust readiness tests verify that unavailable identity or task storage returns HTTP 503. Container checks use a synthetic OIDC issuer and identity: they prove local packaging, storage, shutdown, and backup mechanics only, not live OIDC or hosted platform behavior.
+- After adding the loopback-mode release-entrypoint guard, the smoke rerun could not rebuild the image because the Docker builder could not resolve `index.crates.io`. The prior image smoke remains evidence for commit `01ec692`; it does not verify the current entrypoint change.
 - No Railway service, DNS, certificate, or cloud resource has been created or modified.
 
 Remaining hosted release gates are tracked in [`deployment/PLAN.md`](deployment/PLAN.md) and [`identity-v1/AUTHORIZATION-TEST-PLAN.md`](identity-v1/AUTHORIZATION-TEST-PLAN.md). Railway is not linked in this CLI workspace, and its account billing/usage is unverified.

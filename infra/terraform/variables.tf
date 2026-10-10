@@ -5,15 +5,15 @@ variable "aws_region" {
 }
 
 variable "web_origin" {
-  description = "Exact HTTPS origin of the Vercel frontend."
+  description = "Exact HTTPS origin shared by the hosted frontend and Rust API."
   type        = string
   default     = "https://codexpt.jappi.net.pe"
 }
 
 variable "api_domain" {
-  description = "DNS name for the Caddy-proxied Rust API. DNS records are not currently managed by this Terraform configuration."
+  description = "Public HTTPS host shared by the Rust API and embedded frontend. DNS records are not currently managed by this Terraform configuration."
   type        = string
-  default     = "api.codexpt.jappi.net.pe"
+  default     = "codexpt.jappi.net.pe"
 }
 
 variable "user_pool_domain_prefix" {

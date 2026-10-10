@@ -539,22 +539,29 @@ mod tests {
                 .into_response();
         }
         let now = Utc::now().timestamp();
-        let nonce = if form.get("code").map(String::as_str) == Some("wrong-nonce") {
+        let code = form.get("code").map(String::as_str).unwrap_or_default();
+        let nonce = if code == "wrong-nonce" {
             "invalid-nonce".to_owned()
         } else {
             authorization.nonce
         };
         let claims = serde_json::json!({
-            "iss": state.issuer,
+            "iss": if code == "wrong-issuer" { "https://attacker.example" } else { state.issuer.as_str() },
             "sub": SUBJECT,
-            "aud": CLIENT_ID,
+            "aud": if code == "wrong-audience" { "some-other-client" } else { CLIENT_ID },
             "iat": now,
-            "exp": now + 300,
+            "exp": if code == "expired-token" { now - 1 } else { now + 300 },
             "nonce": nonce,
             "email": EMAIL,
             "email_verified": true
         });
-        let id_token = sign_id_token(&state.private_key, claims);
+        let mut id_token = sign_id_token(&state.private_key, claims);
+        if code == "bad-signature" {
+            let (signed, signature) = id_token.rsplit_once('.').unwrap();
+            let mut bytes = URL_SAFE_NO_PAD.decode(signature).unwrap();
+            bytes[0] ^= 1;
+            id_token = format!("{signed}.{}", URL_SAFE_NO_PAD.encode(bytes));
+        }
         Json(serde_json::json!({
             "access_token":"fixture-access-token",
             "token_type":"Bearer",
@@ -714,11 +721,24 @@ mod tests {
             .iter()
             .find(|value| value.starts_with("__Host-codexpt_session="))
             .unwrap();
+        assert!(session_cookie.contains("; Secure"));
+        assert!(session_cookie.contains("HttpOnly"));
+        assert!(session_cookie.contains("SameSite=Lax"));
+        assert!(session_cookie.contains("Path=/"));
+        assert!(!session_cookie.contains("Domain="));
         assert!(
             callback_cookies
                 .iter()
                 .any(|value| value.starts_with("__Host-codexpt_csrf="))
         );
+        let csrf_cookie = callback_cookies
+            .iter()
+            .find(|value| value.starts_with("__Host-codexpt_csrf="))
+            .unwrap();
+        assert!(csrf_cookie.contains("; Secure"));
+        assert!(csrf_cookie.contains("SameSite=Lax"));
+        assert!(csrf_cookie.contains("Path=/"));
+        assert!(!csrf_cookie.contains("Domain="));
         assert!(
             callback_cookies
                 .iter()
@@ -759,6 +779,47 @@ mod tests {
             .code_challenge = "wrong-challenge".into();
         let bad_pkce = call_callback(state, bad_pkce_state, bad_pkce_cookie, "valid-code").await;
         assert_eq!(bad_pkce.status(), StatusCode::UNAUTHORIZED);
+
+        provider_task.abort();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    #[tokio::test]
+    async fn controlled_oidc_callback_rejects_wrong_issuer_audience_signature_and_expiry() {
+        let (provider, provider_task) = start_provider().await;
+        let database = tempfile::NamedTempFile::new().unwrap();
+        let store = IdentityStore::connect_sqlite(database.path(), 2)
+            .await
+            .unwrap();
+        store
+            .bootstrap_first_owner(&provider.issuer, SUBJECT, EMAIL, "OIDC negative cases")
+            .await
+            .unwrap();
+        let state = OidcState {
+            store,
+            config: Some(OidcConfig {
+                issuer: provider.issuer.clone(),
+                client_id: CLIENT_ID.into(),
+                redirect_uri: "https://api.example.test/api/auth/callback".into(),
+                success_url: "https://codexpt.example.test/".into(),
+            }),
+        };
+
+        for code in [
+            "wrong-issuer",
+            "wrong-audience",
+            "bad-signature",
+            "expired-token",
+        ] {
+            let (state_token, cookie, authorization_url) = begin_test_login(state.clone()).await;
+            authorize_test_login(&provider, &authorization_url).await;
+            let response = call_callback(state.clone(), state_token, cookie, code).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "OIDC accepted invalid token case {code}"
+            );
+        }
 
         provider_task.abort();
         tokio::time::sleep(Duration::from_millis(5)).await;

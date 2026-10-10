@@ -1,5 +1,5 @@
 output "api_elastic_ip" {
-  description = "Vercel DNS A record target for api.codexpt.jappi.net.pe."
+  description = "Public IPv4 address assigned to the Terraform-managed EC2 API host."
   value       = aws_eip.api.public_ip
 }
 

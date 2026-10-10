@@ -1565,6 +1565,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expired_invitation_cannot_be_accepted_or_create_membership() {
+        let store = store().await;
+        let owner = provision(&store, "owner", "owner@example.test").await;
+        let invitee = provision(&store, "invitee", "invitee@example.test").await;
+        let workspace = store
+            .create_workspace_for_owner(&owner, "Expiration test")
+            .await
+            .unwrap();
+        let invite = store
+            .create_invite(
+                &owner,
+                None,
+                &workspace.workspace_id,
+                "invitee@example.test",
+                InviteRole::Editor,
+            )
+            .await
+            .unwrap();
+        sqlx::query("UPDATE workspace_invites SET expires_at = $1 WHERE token_hash = $2")
+            .bind("2000-01-01T00:00:00.000Z")
+            .bind(hash_token(&invite.raw_token))
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            store.accept_invite(&invite.raw_token, &invitee, None).await,
+            Err(IdentityError::NotFound)
+        ));
+        assert!(
+            store
+                .membership(&invitee, &workspace.workspace_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn last_owner_cannot_be_removed_or_downgraded() {
         let store = store().await;
         let owner = provision(&store, "owner", "owner@example.test").await;

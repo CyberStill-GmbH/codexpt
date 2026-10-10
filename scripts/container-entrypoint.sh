@@ -1,6 +1,18 @@
 #!/bin/sh
 set -eu
 
+case "${CODEXPT_OIDC_LOOPBACK_TEST:-false}" in
+    false) ;;
+    true)
+        echo "OIDC loopback test mode is disabled in release containers" >&2
+        exit 1
+        ;;
+    *)
+        echo "CODEXPT_OIDC_LOOPBACK_TEST must be the literal false in release containers" >&2
+        exit 1
+        ;;
+esac
+
 : "${CODEXPT_OIDC_ISSUER:?Set the OIDC issuer URL}"
 : "${CODEXPT_OIDC_CLIENT_ID:?Set the OIDC public client ID}"
 : "${CODEXPT_OIDC_REDIRECT_URI:?Set the exact registered OIDC callback URL}"

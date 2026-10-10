@@ -55,6 +55,13 @@ try {
     Invoke-Docker -DockerArgs @('volume', 'create', $dataVolume) | Out-Null
     Invoke-Docker -DockerArgs @('volume', 'create', $escapeVolume) | Out-Null
 
+    $loopbackTestInReleaseImage = Invoke-Docker -ExpectedExitCode 1 -DockerArgs (@(
+        'run', '--rm', '-v', "${dataVolume}:/data"
+    ) + $oidcEnvironment + @('-e', 'CODEXPT_OIDC_LOOPBACK_TEST=true', $image))
+    if ($loopbackTestInReleaseImage.Output -notmatch 'OIDC loopback test mode is disabled in release containers') {
+        throw 'The release container did not reject the local OIDC loopback-test mode.'
+    }
+
     foreach ($invalidDatabasePath in @(
         'relative.sqlite3',
         '/tmp/codexpt.sqlite3',
@@ -251,6 +258,16 @@ try {
     Write-Host "Container smoke passed: image=$image uid=$runtimeUser health=$health frontend=200 tasks=$taskCount backup=restored"
 }
 finally {
-    & docker rm --force $containerName 2>$null | Out-Null
-    & docker volume rm $dataVolume $readOnlyVolume $escapeVolume 2>$null | Out-Null
+    try {
+        & docker rm --force $containerName 2>&1 | Out-Null
+    }
+    catch {
+        Write-Warning "Could not remove disposable smoke container ${containerName}: $($_.Exception.Message)"
+    }
+    try {
+        & docker volume rm $dataVolume $readOnlyVolume $escapeVolume 2>&1 | Out-Null
+    }
+    catch {
+        Write-Warning "Could not remove disposable smoke volumes: $($_.Exception.Message)"
+    }
 }

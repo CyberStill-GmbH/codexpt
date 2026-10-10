@@ -158,20 +158,7 @@ impl From<AppError> for ApiError {
 struct FrontendAssets;
 
 pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = database_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-    let identity = if let Ok(database_url) = std::env::var("CODEXPT_DATABASE_URL") {
-        if OidcConfig::from_env().is_some() {
-            return Err("hosted OIDC currently requires the shared SQLite store; a split PostgreSQL identity database is not supported".into());
-        }
-        IdentityStore::connect(&database_url, 5).await?
-    } else {
-        IdentityStore::connect_sqlite(&database_path, 5).await?
-    };
+    let loopback_test = oidc_loopback_test_mode()?;
     let oidc_config = OidcConfig::from_env();
     let (address, api_host, web_origin) = if let Some(config) = oidc_config.as_ref() {
         let bind = std::env::var("CODEXPT_BIND_ADDR")
@@ -181,9 +168,16 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
             .map_err(|_| "CODEXPT_API_HOST is required when OIDC is enabled")?;
         let web_origin = std::env::var("CODEXPT_WEB_ORIGIN")
             .map_err(|_| "CODEXPT_WEB_ORIGIN is required when OIDC is enabled")?;
-        validate_hosted_origin(config, &api_host, &web_origin)?;
+        if loopback_test {
+            validate_loopback_test_origin(config, bind, &api_host, &web_origin)?;
+        } else {
+            validate_hosted_origin(config, &api_host, &web_origin)?;
+        }
         (bind, Some(api_host), Some(web_origin))
     } else {
+        if loopback_test {
+            return Err("CODEXPT_OIDC_LOOPBACK_TEST requires a complete OIDC configuration".into());
+        }
         if std::env::var_os("CODEXPT_BIND_ADDR").is_some() {
             return Err(
                 "CODEXPT_BIND_ADDR is only valid with a complete OIDC configuration".into(),
@@ -191,7 +185,21 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
         }
         (SocketAddr::from(([127, 0, 0, 1], port)), None, None)
     };
-    let hosted = api_host.is_some();
+    if let Some(parent) = database_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let identity = if let Ok(database_url) = std::env::var("CODEXPT_DATABASE_URL") {
+        if oidc_config.is_some() {
+            return Err("OIDC currently requires the shared SQLite store; a split PostgreSQL identity database is not supported".into());
+        }
+        IdentityStore::connect(&database_url, 5).await?
+    } else {
+        IdentityStore::connect_sqlite(&database_path, 5).await?
+    };
+    let hosted = oidc_config.is_some() && !loopback_test;
     let listener = tokio::net::TcpListener::bind(address).await?;
     let app = router_with_identity_and_origins(
         database_path,
@@ -201,7 +209,10 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
         api_host,
         web_origin,
     );
-    if hosted {
+    if loopback_test {
+        eprintln!("CodeXPT OIDC loopback test listening on {address}");
+        eprintln!("The test server is restricted to IPv4 loopback. Press Ctrl+C to stop.");
+    } else if hosted {
         eprintln!("CodeXPT hosted API listening on {address}");
     } else {
         eprintln!("CodeXPT local dashboard: http://{address}");
@@ -239,6 +250,52 @@ fn validate_hosted_origin(
     }
     if config.success_url != origin && config.success_url != format!("{origin}/") {
         return Err("OIDC success URL must return to the hosted browser origin");
+    }
+    Ok(())
+}
+
+fn oidc_loopback_test_mode() -> Result<bool, &'static str> {
+    match std::env::var("CODEXPT_OIDC_LOOPBACK_TEST") {
+        Ok(value) => parse_oidc_loopback_test_mode(Some(&value)),
+        Err(std::env::VarError::NotPresent) => parse_oidc_loopback_test_mode(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("CODEXPT_OIDC_LOOPBACK_TEST must be the literal true or false")
+        }
+    }
+}
+
+fn parse_oidc_loopback_test_mode(value: Option<&str>) -> Result<bool, &'static str> {
+    match value {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        Some(_) => Err("CODEXPT_OIDC_LOOPBACK_TEST must be the literal true or false"),
+    }
+}
+
+fn validate_loopback_test_origin(
+    config: &OidcConfig,
+    bind: SocketAddr,
+    api_host: &str,
+    web_origin: &str,
+) -> Result<(), &'static str> {
+    let SocketAddr::V4(bind) = bind else {
+        return Err("OIDC loopback test requires an exact 127.0.0.1 IPv4 bind");
+    };
+    if bind.ip() != &std::net::Ipv4Addr::LOCALHOST || bind.port() == 0 {
+        return Err("OIDC loopback test requires an exact 127.0.0.1 bind and a fixed port");
+    }
+    let host = format!("127.0.0.1:{}", bind.port());
+    let origin = format!("http://{host}");
+    if api_host != host || web_origin != origin {
+        return Err(
+            "OIDC loopback Host and Origin must exactly match the configured loopback bind",
+        );
+    }
+    if config.redirect_uri != format!("{origin}/api/auth/callback") {
+        return Err("OIDC loopback callback must exactly match the configured loopback bind");
+    }
+    if config.success_url != origin && config.success_url != format!("{origin}/") {
+        return Err("OIDC loopback success URL must return to the configured loopback origin");
     }
     Ok(())
 }
@@ -1043,7 +1100,12 @@ async fn answer_decision(
     Path((task_id, decision_id)): Path<(String, String)>,
     Json(input): Json<AnswerDecisionRequest>,
 ) -> Result<Json<MutationResult<serde_json::Value>>, ApiError> {
-    if context.principal.is_some() && context.role != Some(WorkspaceRole::Owner) {
+    if context.principal.is_some()
+        && !matches!(
+            context.role,
+            Some(WorkspaceRole::Owner | WorkspaceRole::Editor)
+        )
+    {
         return Err(ApiError(AppError::HumanApprovalRequired));
     }
     let principal = context.principal;
@@ -1327,6 +1389,476 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn editor_cannot_change_membership_or_transfer_workspace_ownership() {
+        let (app, _path, workspace_id, _owner, _owner_csrf, _, editor, _) =
+            authenticated_app().await;
+        let editor_csrf = crate::identity::derive_csrf_token(&editor);
+        let routes = [
+            (
+                Method::PATCH,
+                format!("/api/workspaces/{workspace_id}/members/target"),
+                r#"{"role":"VIEWER"}"#,
+            ),
+            (
+                Method::DELETE,
+                format!("/api/workspaces/{workspace_id}/members/target"),
+                "",
+            ),
+            (
+                Method::POST,
+                format!("/api/workspaces/{workspace_id}/transfer-ownership"),
+                r#"{"new_owner_user_id":"target"}"#,
+            ),
+        ];
+        for (method, uri, body) in routes {
+            let response = app
+                .clone()
+                .oneshot(authenticated_request(
+                    method,
+                    &uri,
+                    body,
+                    &workspace_id,
+                    &editor,
+                    &editor_csrf,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn anonymous_cannot_read_or_mutate_hosted_workspace_routes() {
+        let (app, _path, workspace_id, _, _, _, _, _) = authenticated_app().await;
+        for (method, uri, body) in [
+            (Method::GET, "/api/tasks", ""),
+            (Method::GET, "/api/workspaces", ""),
+            (
+                Method::GET,
+                &format!("/api/workspaces/{workspace_id}/members"),
+                "",
+            ),
+            (
+                Method::POST,
+                "/api/tasks",
+                r#"{"title":"Anonymous","description":"must fail"}"#,
+            ),
+        ] {
+            let mut builder = Request::builder()
+                .method(method.clone())
+                .uri(uri)
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, ORIGIN)
+                .header(header::CONTENT_TYPE, "application/json");
+            if uri.starts_with("/api/tasks") {
+                builder = builder.header("x-codexpt-workspace-id", &workspace_id);
+            }
+            let response = app
+                .clone()
+                .oneshot(builder.body(Body::from(body)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_resource_ids_cannot_cross_tenant_boundaries() {
+        let (app, path, workspace_a, owner_a_token, owner_a_csrf, _, _, _) =
+            authenticated_app().await;
+        let identity = IdentityStore::connect_sqlite(&path, 3).await.unwrap();
+        let owner_b = identity
+            .provision_identity(
+                "https://issuer.example",
+                "foreign-owner",
+                Some("foreign-owner@example.test"),
+                true,
+            )
+            .await
+            .unwrap();
+        let workspace_b = identity
+            .create_workspace_for_owner(&owner_b, "Foreign workspace")
+            .await
+            .unwrap();
+        let owner_b_session = identity.create_session(&owner_b).await.unwrap();
+
+        let task_a = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                "/api/tasks",
+                r#"{"title":"Workspace A task","description":"private to A"}"#,
+                &workspace_a,
+                &owner_a_token,
+                &owner_a_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(task_a.status(), StatusCode::CREATED);
+        let body = to_bytes(task_a.into_body(), MAX_REQUEST_BYTES)
+            .await
+            .unwrap();
+        let task_a: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let task_a_id = task_a["data"]["task_id"].as_str().unwrap().to_owned();
+
+        let mut store = Store::open(&path).unwrap();
+        store.set_workspace_context(Some(&workspace_b.workspace_id));
+        let task_b = store
+            .create_task("Workspace B task", "private to B", "human:foreign-owner")
+            .unwrap();
+        drop(store);
+
+        for (workspace_id, token, csrf, task_id) in [
+            (
+                workspace_a.as_str(),
+                owner_a_token.as_str(),
+                owner_a_csrf.as_str(),
+                task_b.task_id.as_str(),
+            ),
+            (
+                workspace_b.workspace_id.as_str(),
+                owner_b_session.raw_token.as_str(),
+                owner_b_session.csrf_token.as_str(),
+                task_a_id.as_str(),
+            ),
+        ] {
+            let read = app
+                .clone()
+                .oneshot(authenticated_request(
+                    Method::GET,
+                    &format!("/api/tasks/{task_id}"),
+                    "",
+                    workspace_id,
+                    token,
+                    csrf,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(read.status(), StatusCode::NOT_FOUND);
+
+            let write = app
+                .clone()
+                .oneshot(authenticated_request(
+                    Method::POST,
+                    &format!("/api/tasks/{task_id}/messages"),
+                    r#"{"sender":"human:attacker","recipient":"agent:codex","body":"must not cross"}"#,
+                    workspace_id,
+                    token,
+                    csrf,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(write.status(), StatusCode::NOT_FOUND);
+        }
+
+        let mut store = Store::open(&path).unwrap();
+        store.set_workspace_context(Some(&workspace_b.workspace_id));
+        assert!(store.list_messages(&task_b.task_id).unwrap().is_empty());
+        store.set_workspace_context(Some(&workspace_a));
+        assert!(store.list_messages(&task_a_id).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn removing_membership_revokes_the_old_http_session_immediately() {
+        let (app, path, workspace_id, owner_token, _, _, editor_token, _) =
+            authenticated_app().await;
+        let identity = IdentityStore::connect_sqlite(&path, 3).await.unwrap();
+        let owner = identity
+            .resolve_session(&owner_token)
+            .await
+            .unwrap()
+            .unwrap();
+        let editor = identity
+            .resolve_session(&editor_token)
+            .await
+            .unwrap()
+            .unwrap();
+        identity
+            .revoke_membership(
+                &owner.user_id,
+                Some(&owner.session_id),
+                &workspace_id,
+                &editor.user_id,
+            )
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(authenticated_request(
+                Method::GET,
+                "/api/tasks",
+                "",
+                &workspace_id,
+                &editor_token,
+                "irrelevant-for-GET",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn owner_http_membership_change_transfer_and_revoke_follow_current_roles() {
+        let (app, path, workspace_id, owner_token, owner_csrf, _, editor_token, _) =
+            authenticated_app().await;
+        let identity = IdentityStore::connect_sqlite(&path, 3).await.unwrap();
+        let owner = identity
+            .resolve_session(&owner_token)
+            .await
+            .unwrap()
+            .unwrap();
+        let editor = identity
+            .resolve_session(&editor_token)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let role_changed = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::PATCH,
+                &format!("/api/workspaces/{workspace_id}/members/{}", editor.user_id),
+                r#"{"role":"VIEWER"}"#,
+                &workspace_id,
+                &owner_token,
+                &owner_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(role_changed.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            identity
+                .membership(&editor.user_id, &workspace_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .role,
+            WorkspaceRole::Viewer
+        );
+        let stale_editor = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::GET,
+                "/api/tasks",
+                "",
+                &workspace_id,
+                &editor_token,
+                "irrelevant-for-GET",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stale_editor.status(), StatusCode::UNAUTHORIZED);
+
+        let transferred = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                &format!("/api/workspaces/{workspace_id}/transfer-ownership"),
+                &format!(r#"{{"new_owner_user_id":"{}"}}"#, editor.user_id),
+                &workspace_id,
+                &owner_token,
+                &owner_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(transferred.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            identity
+                .membership(&editor.user_id, &workspace_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .role,
+            WorkspaceRole::Owner
+        );
+        assert_eq!(
+            identity
+                .membership(&owner.user_id, &workspace_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .role,
+            WorkspaceRole::Editor
+        );
+
+        let editor_owner_session = identity.create_session(&editor.user_id).await.unwrap();
+        let revoked = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::DELETE,
+                &format!("/api/workspaces/{workspace_id}/members/{}", owner.user_id),
+                "",
+                &workspace_id,
+                &editor_owner_session.raw_token,
+                &editor_owner_session.csrf_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+        assert!(
+            identity
+                .membership(&owner.user_id, &workspace_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn invite_acceptance_requires_csrf_and_is_single_use_over_http() {
+        let (app, path, workspace_id, owner_token, owner_csrf, _, _, _) = authenticated_app().await;
+        let identity = IdentityStore::connect_sqlite(&path, 3).await.unwrap();
+        let invitee_id = identity
+            .provision_identity(
+                "https://issuer.example",
+                "http-invitee",
+                Some("http-invitee@example.test"),
+                true,
+            )
+            .await
+            .unwrap();
+        let invitee_session = identity.create_session(&invitee_id).await.unwrap();
+
+        let created = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                &format!("/api/workspaces/{workspace_id}/invites"),
+                r#"{"email":"http-invitee@example.test","role":"EDITOR"}"#,
+                &workspace_id,
+                &owner_token,
+                &owner_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let body = to_bytes(created.into_body(), MAX_REQUEST_BYTES)
+            .await
+            .unwrap();
+        let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let invite_token = created["raw_token"].as_str().unwrap().to_owned();
+
+        let invalid_csrf = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                "/api/invites/accept",
+                &format!(r#"{{"token":"{invite_token}"}}"#),
+                &workspace_id,
+                &invitee_session.raw_token,
+                "invalid-csrf",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(invalid_csrf.status(), StatusCode::FORBIDDEN);
+        assert!(
+            identity
+                .membership(&invitee_id, &workspace_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let accepted = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                "/api/invites/accept",
+                &format!(r#"{{"token":"{invite_token}"}}"#),
+                &workspace_id,
+                &invitee_session.raw_token,
+                &invitee_session.csrf_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::CREATED);
+        let membership = identity
+            .membership(&invitee_id, &workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(membership.role, WorkspaceRole::Editor);
+
+        let replay = app
+            .oneshot(authenticated_request(
+                Method::POST,
+                "/api/invites/accept",
+                &format!(r#"{{"token":"{invite_token}"}}"#),
+                &workspace_id,
+                &invitee_session.raw_token,
+                &invitee_session.csrf_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            identity
+                .membership(&invitee_id, &workspace_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .role,
+            WorkspaceRole::Editor
+        );
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_session_and_emits_host_only_cookie_deletions() {
+        let (app, _path, workspace_id, owner_token, owner_csrf, _, _, _) =
+            authenticated_app().await;
+        let logged_out = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                "/api/auth/logout",
+                "",
+                &workspace_id,
+                &owner_token,
+                &owner_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(logged_out.status(), StatusCode::NO_CONTENT);
+        let cookie_headers = logged_out
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .collect::<Vec<_>>();
+        let session_cookie = cookie_headers
+            .iter()
+            .find(|value| value.starts_with("codexpt_session=;"))
+            .unwrap();
+        assert!(session_cookie.contains("HttpOnly"));
+        assert!(session_cookie.contains("SameSite=Lax"));
+        assert!(session_cookie.contains("Path=/"));
+        assert!(session_cookie.contains("Max-Age=0"));
+        assert!(!session_cookie.contains("Domain="));
+        assert!(
+            cookie_headers
+                .iter()
+                .any(|value| value.starts_with("codexpt_csrf=;"))
+        );
+
+        let replay = app
+            .oneshot(authenticated_request(
+                Method::GET,
+                "/api/tasks",
+                "",
+                &workspace_id,
+                &owner_token,
+                &owner_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     async fn viewer_is_read_only_at_the_http_boundary() {
         let (app, _path, workspace_id, _owner, _owner_csrf, _owner_session, _editor, viewer) =
             authenticated_app().await;
@@ -1372,6 +1904,368 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(membership_write.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn editor_can_answer_a_human_decision_with_verified_actor() {
+        let (app, path, workspace_id, _owner, _owner_csrf, _, editor, _) =
+            authenticated_app().await;
+        let editor_csrf = crate::identity::derive_csrf_token(&editor);
+        let created = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                "/api/tasks",
+                r#"{"title":"Editor decision flow","description":"HTTP permission check"}"#,
+                &workspace_id,
+                &editor,
+                &editor_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let body = to_bytes(created.into_body(), MAX_REQUEST_BYTES)
+            .await
+            .unwrap();
+        let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let task_id = created["data"]["task_id"].as_str().unwrap().to_owned();
+
+        let proposed = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                &format!("/api/tasks/{task_id}/transition"),
+                r#"{"expected":"open","next":"proposed","actor":"human:owner-spoof","expected_version":1}"#,
+                &workspace_id,
+                &editor,
+                &editor_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(proposed.status(), StatusCode::OK);
+
+        let requested = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                &format!("/api/tasks/{task_id}/decisions"),
+                r#"{"question":"Choose a test option","actor":"human:owner-spoof"}"#,
+                &workspace_id,
+                &editor,
+                &editor_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(requested.status(), StatusCode::CREATED);
+        let body = to_bytes(requested.into_body(), MAX_REQUEST_BYTES)
+            .await
+            .unwrap();
+        let requested: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let decision_id = requested["data"]["decision_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let answered = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                &format!("/api/tasks/{task_id}/decisions/{decision_id}/answer"),
+                r#"{"answer":"Use option A"}"#,
+                &workspace_id,
+                &editor,
+                &editor_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(answered.status(), StatusCode::OK);
+
+        let detail = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::GET,
+                &format!("/api/tasks/{task_id}"),
+                "",
+                &workspace_id,
+                &editor,
+                &editor_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(detail.status(), StatusCode::OK);
+        let body = to_bytes(detail.into_body(), MAX_REQUEST_BYTES)
+            .await
+            .unwrap();
+        let detail: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(detail["pending_decision"].is_null());
+
+        let event = Store::open(path)
+            .unwrap()
+            .list_events(&task_id)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.event_type == "human_decision_answered")
+            .unwrap();
+        assert!(event.actor.starts_with("human:"));
+        assert_ne!(event.actor, "human:owner-spoof");
+        assert_eq!(event.event_type, "human_decision_answered");
+    }
+
+    #[tokio::test]
+    async fn every_viewer_write_route_is_denied_without_side_effects() {
+        let (app, path, workspace_id, owner, owner_csrf, _, _editor, viewer) =
+            authenticated_app().await;
+        let viewer_csrf = crate::identity::derive_csrf_token(&viewer);
+        let created = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::POST,
+                "/api/tasks",
+                r#"{"title":"Seed task","description":"Keep unchanged"}"#,
+                &workspace_id,
+                &owner,
+                &owner_csrf,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let body = to_bytes(created.into_body(), MAX_REQUEST_BYTES)
+            .await
+            .unwrap();
+        let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let task_id = created["data"]["task_id"].as_str().unwrap();
+
+        let routes = [
+            (
+                Method::POST,
+                "/api/tasks",
+                r#"{"title":"Forbidden","description":""}"#,
+            ),
+            (
+                Method::POST,
+                &format!("/api/tasks/{task_id}/messages"),
+                r#"{"sender":"human:viewer","recipient":"agent:codex","body":"Forbidden"}"#,
+            ),
+            (
+                Method::POST,
+                &format!("/api/tasks/{task_id}/transition"),
+                r#"{"expected":"open","next":"proposed","actor":"human:viewer","expected_version":2}"#,
+            ),
+            (
+                Method::POST,
+                &format!("/api/tasks/{task_id}/decisions"),
+                r#"{"question":"Forbidden?","actor":"human:viewer"}"#,
+            ),
+            (
+                Method::POST,
+                &format!("/api/tasks/{task_id}/decisions/missing/answer"),
+                r#"{"answer":"Forbidden"}"#,
+            ),
+            (
+                Method::POST,
+                &format!("/api/workspaces/{workspace_id}/invites"),
+                r#"{"email":"blocked@example.test","role":"EDITOR"}"#,
+            ),
+            (
+                Method::PATCH,
+                &format!("/api/workspaces/{workspace_id}/members/target"),
+                r#"{"role":"VIEWER"}"#,
+            ),
+            (
+                Method::DELETE,
+                &format!("/api/workspaces/{workspace_id}/members/target"),
+                "",
+            ),
+            (
+                Method::POST,
+                &format!("/api/workspaces/{workspace_id}/transfer-ownership"),
+                r#"{"new_owner_user_id":"target"}"#,
+            ),
+        ];
+
+        for (method, uri, body) in routes {
+            let response = app
+                .clone()
+                .oneshot(authenticated_request(
+                    method.clone(),
+                    uri,
+                    body,
+                    &workspace_id,
+                    &viewer,
+                    &viewer_csrf,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "viewer unexpectedly accessed {method} {uri}"
+            );
+        }
+
+        let store = Store::open(path).unwrap();
+        let mut scoped = store;
+        scoped.set_workspace_context(Some(&workspace_id));
+        let tasks = scoped.list_tasks().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task_id, task_id);
+        assert_eq!(tasks[0].status, TaskStatus::Open);
+        assert!(scoped.list_messages(task_id).unwrap().is_empty());
+        assert!(scoped.get_pending_decision(task_id).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn csrf_origin_and_host_failures_reject_writes_before_storage_changes() {
+        let (app, path, workspace_id, owner, owner_csrf, _, _editor, _) = authenticated_app().await;
+        let valid_cookie = format!("codexpt_session={owner}; codexpt_csrf={owner_csrf}");
+        let missing_csrf_cookie = format!("codexpt_session={owner}");
+        let wrong_csrf_cookie = format!("codexpt_session={owner}; codexpt_csrf=wrong");
+        let other_session_csrf = crate::identity::derive_csrf_token("another-session-secret");
+        let cases = [
+            (
+                "missing session",
+                None,
+                Some(ORIGIN),
+                Some(HOST),
+                Some(owner_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "missing csrf cookie",
+                Some(missing_csrf_cookie.as_str()),
+                Some(ORIGIN),
+                Some(HOST),
+                Some(owner_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "missing csrf header",
+                Some(valid_cookie.as_str()),
+                Some(ORIGIN),
+                Some(HOST),
+                None,
+                Some("application/json"),
+            ),
+            (
+                "wrong csrf",
+                Some(valid_cookie.as_str()),
+                Some(ORIGIN),
+                Some(HOST),
+                Some("wrong"),
+                Some("application/json"),
+            ),
+            (
+                "wrong csrf cookie",
+                Some(wrong_csrf_cookie.as_str()),
+                Some(ORIGIN),
+                Some(HOST),
+                Some(owner_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "csrf from another session",
+                Some(valid_cookie.as_str()),
+                Some(ORIGIN),
+                Some(HOST),
+                Some(other_session_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "missing origin",
+                Some(valid_cookie.as_str()),
+                None,
+                Some(HOST),
+                Some(owner_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "wrong origin",
+                Some(valid_cookie.as_str()),
+                Some("https://attacker.example"),
+                Some(HOST),
+                Some(owner_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "wrong origin scheme",
+                Some(valid_cookie.as_str()),
+                Some("https://127.0.0.1:4173"),
+                Some(HOST),
+                Some(owner_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "wrong origin port",
+                Some(valid_cookie.as_str()),
+                Some("http://127.0.0.1:4174"),
+                Some(HOST),
+                Some(owner_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "wrong host",
+                Some(valid_cookie.as_str()),
+                Some(ORIGIN),
+                Some("attacker.example"),
+                Some(owner_csrf.as_str()),
+                Some("application/json"),
+            ),
+            (
+                "wrong content type",
+                Some(valid_cookie.as_str()),
+                Some(ORIGIN),
+                Some(HOST),
+                Some(owner_csrf.as_str()),
+                Some("text/plain"),
+            ),
+        ];
+
+        for (name, cookie, origin, host, csrf_header, content_type) in cases {
+            let mut builder = Request::builder()
+                .method(Method::POST)
+                .uri("/api/tasks")
+                .header("x-codexpt-workspace-id", &workspace_id);
+            if let Some(value) = host {
+                builder = builder.header(header::HOST, value);
+            }
+            if let Some(value) = origin {
+                builder = builder.header(header::ORIGIN, value);
+            }
+            if let Some(value) = content_type {
+                builder = builder.header(header::CONTENT_TYPE, value);
+            }
+            if let Some(value) = cookie {
+                builder = builder.header(header::COOKIE, value);
+            }
+            if let Some(value) = csrf_header {
+                builder = builder.header("x-csrf-token", value);
+            }
+            let response = app
+                .clone()
+                .oneshot(
+                    builder
+                        .body(Body::from(
+                            r#"{"title":"Must not persist","description":""}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(
+                matches!(
+                    (name, response.status()),
+                    ("missing session", StatusCode::UNAUTHORIZED)
+                        | ("wrong content type", StatusCode::UNSUPPORTED_MEDIA_TYPE)
+                        | (_, StatusCode::FORBIDDEN)
+                ),
+                "unexpected status for {name}: {}",
+                response.status()
+            );
+        }
+
+        let mut scoped = Store::open(path).unwrap();
+        scoped.set_workspace_context(Some(&workspace_id));
+        assert!(scoped.list_tasks().unwrap().is_empty());
     }
 
     fn app() -> (Router, PathBuf) {
@@ -1644,6 +2538,56 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn oidc_loopback_test_mode_requires_explicit_and_matching_ipv4_loopback_settings() {
+        assert!(!parse_oidc_loopback_test_mode(None).unwrap());
+        assert!(!parse_oidc_loopback_test_mode(Some("false")).unwrap());
+        assert!(parse_oidc_loopback_test_mode(Some("true")).unwrap());
+        assert!(parse_oidc_loopback_test_mode(Some("1")).is_err());
+        assert!(parse_oidc_loopback_test_mode(Some("TRUE")).is_err());
+
+        let config = OidcConfig {
+            issuer: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test".into(),
+            client_id: "test-public-client".into(),
+            redirect_uri: "http://127.0.0.1:4173/api/auth/callback".into(),
+            success_url: "http://127.0.0.1:4173/".into(),
+        };
+        let bind: SocketAddr = "127.0.0.1:4173".parse().unwrap();
+        assert!(
+            validate_loopback_test_origin(&config, bind, "127.0.0.1:4173", "http://127.0.0.1:4173")
+                .is_ok()
+        );
+
+        for (address, host, origin) in [
+            ("0.0.0.0:4173", "0.0.0.0:4173", "http://0.0.0.0:4173"),
+            (
+                "192.168.1.20:4173",
+                "192.168.1.20:4173",
+                "http://192.168.1.20:4173",
+            ),
+            ("[::1]:4173", "[::1]:4173", "http://[::1]:4173"),
+            ("127.0.0.1:0", "127.0.0.1:0", "http://127.0.0.1:0"),
+        ] {
+            assert!(
+                validate_loopback_test_origin(&config, address.parse().unwrap(), host, origin)
+                    .is_err()
+            );
+        }
+        assert!(
+            validate_loopback_test_origin(&config, bind, "127.0.0.1:4174", "http://127.0.0.1:4174")
+                .is_err()
+        );
+        assert!(
+            validate_loopback_test_origin(
+                &config,
+                bind,
+                "127.0.0.1:4173",
+                "https://127.0.0.1:4173"
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
