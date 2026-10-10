@@ -4,6 +4,7 @@ $suffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
 $containerName = "codexpt-smoke-$suffix"
 $dataVolume = "codexpt-smoke-data-$suffix"
 $readOnlyVolume = "codexpt-smoke-readonly-$suffix"
+$escapeVolume = "codexpt-smoke-escape-$suffix"
 $image = 'codexpt:release-candidate'
 $oidcEnvironment = @(
     '-e', 'CODEXPT_OIDC_ISSUER=https://issuer.example',
@@ -52,6 +53,7 @@ try {
     }
 
     Invoke-Docker -DockerArgs @('volume', 'create', $dataVolume) | Out-Null
+    Invoke-Docker -DockerArgs @('volume', 'create', $escapeVolume) | Out-Null
 
     foreach ($invalidDatabasePath in @(
         'relative.sqlite3',
@@ -68,14 +70,19 @@ try {
 
     Invoke-Docker -DockerArgs @(
         'run', '--rm', '--user', '0', '--entrypoint', '/bin/sh',
-        '-v', "${dataVolume}:/data", $image, '-c', 'ln -s /tmp /data/escape'
+        '-v', "${dataVolume}:/data", '-v', "${escapeVolume}:/outside",
+        $image, '-c', 'ln -s /outside /data/escape'
     ) | Out-Null
     $symlinkEscape = Invoke-Docker -ExpectedExitCode 1 -DockerArgs (@(
-        'run', '--rm', '-v', "${dataVolume}:/data"
-    ) + $oidcEnvironment + @('-e', 'CODEXPT_DB_PATH=/data/escape/codexpt.sqlite3', $image))
+        'run', '--rm', '-v', "${dataVolume}:/data", '-v', "${escapeVolume}:/outside"
+    ) + $oidcEnvironment + @('-e', 'CODEXPT_DB_PATH=/data/escape/subdir/codexpt.sqlite3', $image))
     if ($symlinkEscape.Output -notmatch 'CODEXPT_DB_PATH resolves outside the mounted /data volume') {
         throw 'The container accepted a database path that escapes /data through a symlink.'
     }
+    Invoke-Docker -DockerArgs @(
+        'run', '--rm', '--entrypoint', '/bin/sh', '-v', "${escapeVolume}:/outside",
+        $image, '-c', 'test ! -e /outside/subdir'
+    ) | Out-Null
 
     $missingIdentity = Invoke-Docker -ExpectedExitCode 2 -DockerArgs @(
         'run', '--rm', '-v', "${dataVolume}:/data", $image
@@ -229,6 +236,11 @@ try {
             throw "Confirmed task $taskId is missing from the restored backup."
         }
     }
+    $missingRestoredIds = @($taskIds | Where-Object { $_ -notin $restoredIds })
+    $unexpectedRestoredIds = @($restoredIds | Where-Object { $_ -notin $taskIds })
+    if ($missingRestoredIds.Count -gt 0 -or $unexpectedRestoredIds.Count -gt 0) {
+        throw 'The backup restore did not preserve the exact complete task ID set.'
+    }
     $restoredIntegrity = Invoke-Docker -DockerArgs @(
         'exec', $containerName, '/usr/local/bin/codexpt', '--db', '/data/restored.sqlite3', 'db-check'
     )
@@ -240,5 +252,5 @@ try {
 }
 finally {
     & docker rm --force $containerName 2>$null | Out-Null
-    & docker volume rm $dataVolume $readOnlyVolume 2>$null | Out-Null
+    & docker volume rm $dataVolume $readOnlyVolume $escapeVolume 2>$null | Out-Null
 }

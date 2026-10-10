@@ -33,8 +33,28 @@ if [ -L "$CODEXPT_DB_PATH" ] || [ -d "$CODEXPT_DB_PATH" ]; then
     exit 1
 fi
 database_parent=$(dirname -- "$CODEXPT_DB_PATH")
-mkdir -p -- "$database_parent"
 canonical_data=$(realpath -e -- /data)
+existing_parent=$database_parent
+while [ ! -e "$existing_parent" ] && [ ! -L "$existing_parent" ]; do
+    next_parent=$(dirname -- "$existing_parent")
+    if [ "$next_parent" = "$existing_parent" ]; then
+        echo "CODEXPT_DB_PATH has no existing parent under /data" >&2
+        exit 1
+    fi
+    existing_parent=$next_parent
+done
+if ! canonical_existing_parent=$(realpath -e -- "$existing_parent"); then
+    echo "CODEXPT_DB_PATH has an invalid existing parent" >&2
+    exit 1
+fi
+case "$canonical_existing_parent" in
+    "$canonical_data"|"$canonical_data"/*) ;;
+    *)
+        echo "CODEXPT_DB_PATH resolves outside the mounted /data volume" >&2
+        exit 1
+        ;;
+esac
+mkdir -p -- "$database_parent"
 canonical_parent=$(realpath -e -- "$database_parent")
 case "$canonical_parent" in
     "$canonical_data"|"$canonical_data"/*) ;;
