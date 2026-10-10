@@ -8,12 +8,12 @@ CodeXPT should read as a working technical notebook and audit ledger: calm, insp
 
 ## Visual rules
 
-- Warm paper surface `#f3f1eb`, clear sheet `#fbfaf6`, ink `#20211f`, fine rules `#dfddd4`.
-- Vermilion `#ad4937` marks the active/review action; muted blue identifies a declared ChatGPT participant; green marks human input or a completed state. Pair color with text and shape.
+- Warm paper surface `#f7f6f2`, white sheet `#ffffff`, ink `#171c24`, muted text `#58616d`, and rules `#d4d2cb`.
+- Terracotta `#ad4937` marks review actions; blue `#345fad` distinguishes a declared ChatGPT participant; green `#0f6956` marks authenticated human input or completed states. Pair color with text and shape.
 - Literata for editorial headings; IBM Plex Sans for controls and prose; IBM Plex Mono only for timestamps, hashes, and identifiers.
 - A narrow timeline rail carries chronology. A side annotation rail carries state, actions, and task metadata. On mobile, the task list becomes a compact horizontal strip and annotations follow the chronology.
 - Keep focus outlines, reduced-motion support, readable contrast, and semantic buttons, labels, lists, and status text.
-- The compact inline SVG mark is a 24 px vertical ledger rule with three filled event nodes and a small X at the decision node, as proposed in delegated design review; it is a navigational signature, not an illustration.
+- The compact inline SVG mark is a geometric panda with two distinct collaboration paths converging beneath it. Keep a simplified monochrome face for the 16 px favicon; do not reproduce the OpenAI knot or rely on the generated PNG as a production logo.
 
 ## Interaction rules
 
@@ -25,3 +25,5 @@ CodeXPT should read as a working technical notebook and audit ledger: calm, insp
 ## Review record
 
 Code-first implementation was approved in the designated CodeXPT design review conversation. The direction was refined from the visual idea of a technical ledger with an annotation margin. Review the actual browser rendering after functionality; do not treat compilation as design approval.
+
+The actual desktop and mobile dashboard captures were reviewed. The editorial ledger direction was approved, with required refinements for state-specific actions, authenticated authorship, metadata readability, and mobile composition. See [the brand and UX review](docs/design/branding.md) for the generated mark reference and implementation notes.

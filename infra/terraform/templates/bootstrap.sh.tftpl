@@ -1,0 +1,110 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/codexpt-bootstrap.log | logger -t codexpt-bootstrap -s 2>/dev/console) 2>&1
+
+APP_RELEASE_URL='${app_release_url}'
+APP_RELEASE_HASH='${app_release_hash}'
+BACKUP_BUCKET='${backup_bucket}'
+AWS_REGION='${aws_region}'
+CADDY_IMAGE='${caddy_image}'
+
+dnf install -y docker awscli-2
+systemctl enable --now docker
+id codexpt >/dev/null 2>&1 || useradd --system --home-dir /var/lib/codexpt --shell /sbin/nologin codexpt
+install -d -o root -g root -m 0755 /etc/codexpt
+install -d -o codexpt -g codexpt -m 0700 /var/lib/codexpt /var/lib/codexpt/backups
+
+curl --fail --location --retry 3 --output /tmp/codexpt "$APP_RELEASE_URL"
+echo "$APP_RELEASE_HASH  /tmp/codexpt" | sha256sum --check --status
+install -o root -g root -m 0755 /tmp/codexpt /usr/local/bin/codexpt
+rm -f /tmp/codexpt
+
+cat > /etc/systemd/system/codexpt.service <<'UNIT'
+[Unit]
+Description=CodeXPT private beta API
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codexpt
+Group=codexpt
+Environment=AWS_REGION=${aws_region}
+Environment=AWS_DEFAULT_REGION=${aws_region}
+Environment=CODEXPT_OIDC_ISSUER=${oidc_issuer}
+Environment=CODEXPT_OIDC_CLIENT_ID=${oidc_client_id}
+Environment=CODEXPT_OIDC_REDIRECT_URI=${oidc_redirect_uri}
+Environment=CODEXPT_LOGIN_SUCCESS_URL=${login_success_url}
+Environment=CODEXPT_BIND_ADDR=127.0.0.1:4173
+Environment=CODEXPT_API_HOST=${api_domain}
+Environment=CODEXPT_WEB_ORIGIN=${web_origin}
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/codexpt
+ExecStart=/usr/local/bin/codexpt --db /var/lib/codexpt/state.sqlite3 serve --port 4173
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat > /etc/codexpt/Caddyfile <<CADDYFILE
+${api_domain} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:4173
+}
+CADDYFILE
+
+docker pull "$CADDY_IMAGE"
+docker run --detach --name codexpt-caddy --restart unless-stopped --network host \
+  --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE \
+  --volume /etc/codexpt/Caddyfile:/etc/caddy/Caddyfile:ro \
+  --volume codexpt-caddy-data:/data \
+  --volume codexpt-caddy-config:/config \
+  "$CADDY_IMAGE" caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+
+cat > /usr/local/libexec/codexpt-backup <<BACKUP_SCRIPT
+#!/bin/bash
+set -euo pipefail
+stamp=\$(date -u +%Y%m%dT%H%M%SZ)
+backup="/var/lib/codexpt/backups/state-\$stamp.sqlite3"
+/usr/local/bin/codexpt --db /var/lib/codexpt/state.sqlite3 backup --output "\$backup"
+aws s3 cp "\$backup" "s3://${backup_bucket}/daily/\$stamp/state.sqlite3" --region ${aws_region} --sse AES256
+find /var/lib/codexpt/backups -type f -mtime +2 -delete
+BACKUP_SCRIPT
+chmod 0750 /usr/local/libexec/codexpt-backup
+
+cat > /etc/systemd/system/codexpt-backup.service <<'UNIT'
+[Unit]
+Description=Create and upload a consistent CodeXPT SQLite backup
+After=codexpt.service
+
+[Service]
+Type=oneshot
+User=codexpt
+Group=codexpt
+Environment=AWS_REGION=${aws_region}
+Environment=AWS_DEFAULT_REGION=${aws_region}
+ExecStart=/usr/local/libexec/codexpt-backup
+UNIT
+
+cat > /etc/systemd/system/codexpt-backup.timer <<'UNIT'
+[Unit]
+Description=Daily CodeXPT database backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now codexpt.service codexpt-backup.timer
+systemctl start codexpt-backup.service

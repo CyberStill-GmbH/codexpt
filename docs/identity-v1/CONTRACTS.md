@@ -1,6 +1,6 @@
-# Identity v1 contracts (proposed)
+# Identity v1 contracts
 
-These are implementation constraints, not evidence that authentication exists. No route in `v0.1.0-local-mvp` currently authenticates these principals.
+These contracts guide the Identity v1 implementation. The current branch has a first local implementation of OIDC, sessions, workspace roles, invitations, and task scoping; it is not yet release- or deployment-ready. The released `v0.1.0-local-mvp` remains local-only.
 
 ## Trusted principal
 
@@ -34,7 +34,7 @@ ProviderConnection { connection_id, workspace_id, provider, granted_scopes, secr
 LegacyActorAssertion { original_label, provenance: DeclaredUnverified }
 ```
 
-- A human user authenticates through OIDC and receives workspace membership. Only an authorized human can make a human approval.
+- A human user authenticates through OIDC and receives workspace membership only after an active, verified-email invitation is accepted. Only an authorized human can make a human approval.
 - An agent identity represents a runtime, not the person who configured it. Agent credentials/scopes are future work; agents cannot use a human session or approve on behalf of a person.
 - A provider connection represents a workspace's grant to an external service. It is not an authenticated CodeXPT user or agent and its OAuth secret is not returned to the browser.
 - Existing event actor strings, including `human:cesar`, remain immutable `LegacyActorAssertion { original_label, DeclaredUnverified }`. Migration never maps these values to `user_id` or treats them as verified. Any later attribution must be an explicit, separately audited link that preserves the original assertion.
@@ -70,13 +70,22 @@ Every lookup of a task, decision, message, evidence reference, or event must be 
 - The approval is bound to the pending decision and its evidence references. The event stores the authenticated internal user id, session id, workspace/resource ids, expected version, evidence references, timestamp, correlation/causation ids, and resulting version.
 - The state transition, approval event, and audit event commit atomically. Role membership comes from CodeXPT storage at authorization time, not Cognito or request data.
 
+## Ownership, invitations, and membership lifecycle
+
+- The first workspace and initial `OWNER` are provisioned out of band by an operator using an explicit verified `(issuer, subject)` identity. There is no public registration or implicit “first login becomes owner” rule.
+- Only a current workspace `OWNER` may create an invitation, change another member's role, revoke membership, or initiate ownership transfer. Each action is scoped to one workspace and audited.
+- An invitation is single-use, stored as a token digest, expires after seven days, and is accepted only by an authenticated identity whose verified email matches the invitation. A Cognito login without verified email cannot accept an email-bound invite. Invitation acceptance adds membership in one transaction; it never creates an Owner automatically.
+- Multiple owners are allowed, but a workspace must never have zero active owners. Removing/downgrading/disabling the last Owner is rejected. The transaction that transfers ownership promotes an existing active member to `OWNER`, then demotes the transferring Owner to `EDITOR`; both role changes and one audit event commit atomically.
+- Deleting/disabling a human user with memberships requires explicit membership revocation first; the operation is denied if it would leave any workspace ownerless. Account deletion and recovery remain an operator-controlled procedure for the first beta.
+
 ## OIDC browser endpoints
 
-- `GET /auth/login`: generate cryptographically random one-use `state`, `nonce`, and PKCE verifier/challenge; store expiring transaction (max 5 minutes) server-side; redirect only to configured issuer and fixed callback.
-- `GET /auth/callback`: require matching unexpired one-use state; exchange code server-side; validate signature via issuer JWKS, exact issuer, client audience, nonce, time claims, allowed algorithm, and code verifier; resolve account by `(issuer, sub)`; reject unprovisioned/disabled users without creating a public account.
+- `GET /api/auth/login`: generate cryptographically random one-use `state`, `nonce`, and PKCE verifier/challenge; store expiring transaction (10 minutes) server-side; redirect only to configured issuer and fixed callback.
+- `GET /api/auth/callback`: require matching unexpired one-use state and browser cookie; exchange code server-side; validate signature via issuer JWKS, exact issuer, client audience, nonce, time claims, allowed algorithm, and code verifier; resolve account by `(issuer, sub)`. A first login may create an identity row only when its verified email has an active invitation; it does not grant workspace access until the invite is accepted.
 - On successful callback: rotate/create the session, log the event, set a host-only `__Host-codexpt_session` cookie with `Secure; HttpOnly; SameSite=Lax; Path=/`, and redirect to a fixed configured Vercel URL. Never accept an arbitrary `return_to` URL.
-- `GET /api/session`: return only a minimal profile, CSRF token, workspace ids, and server-derived role/capabilities. Never return OIDC ID, access, or refresh tokens.
-- `POST /auth/logout`: require session + CSRF + allowed Origin, revoke session in SQLx storage, expire cookie. Also support owner/security-driven revocation.
+- `GET /api/auth/me`: return only a minimal profile and a CSRF token. Never return OIDC ID, access, or refresh tokens.
+- `POST /api/auth/logout`: require session + CSRF + allowed Origin, revoke session in SQLx storage, expire cookie. Also support owner/security-driven revocation.
+- `GET /api/workspaces`: return memberships derived from CodeXPT storage. `POST /api/workspaces/{id}/invites` creates a one-use invite token for a verified-email match; `POST /api/invites/accept` accepts it after OIDC login. Member role changes/removal and ownership transfer are Owner-only.
 - All JSON mutation routes: require a valid server-side session, exact allowed Origin, CSRF token tied to session, and workspace authorization before any read/mutation that could disclose protected data.
 
 ## Session lifecycle

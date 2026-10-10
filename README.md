@@ -1,5 +1,7 @@
 # CodeXPT
 
+[Repositorio](https://github.com/CyberStill-GmbH/codexpt) · [Plan de despliegue](docs/deployment/PLAN.md) · [Reporte de validación](docs/VALIDATION-REPORT.md)
+
 **Release:** `v0.1.0-local-mvp`. Workspace local para registrar propuestas, revisiones, evidencia y decisiones humanas con un historial auditable. El core es Rust + SQLite; el dashboard local de React/TypeScript se sirve desde Rust y no depende de infraestructura hospedada.
 
 ## Requisitos
@@ -47,6 +49,18 @@ Por defecto la base queda en `.codexpt/state.sqlite3`. El archivo está ignorado
 ## Alcance y límites de v0.1.0-local-mvp
 
 El MVP local valida esquema, transiciones, atomicidad, idempotencia, recuperación e historial y permite operar esas funciones desde el dashboard. No conecta automáticamente sesiones ni demuestra que reduzca el tiempo humano: los mensajes de otros agentes siguen siendo ingresados por una persona. Las etiquetas se pueden suplantar por cualquier proceso con acceso local; no es autenticación. La evaluación comparativa de 12 tareas pertenece a una fase posterior.
+
+## Identity v1 — prototipo en curso
+
+La rama de trabajo agrega autenticación OIDC, sesiones revocables, roles por workspace, invitaciones y una página de acceso CodeXPT. Esto es un prototipo local de la siguiente fase, no una versión desplegable: el proveedor OIDC no está configurado, el callback aún no tiene una prueba end-to-end con un proveedor controlado, y faltan controles/auditoría de producción. El release `v0.1.0-local-mvp` sigue siendo el modo local descrito arriba. No expongas el servidor ni actives registro público.
+
+El Owner inicial se aprovisiona una sola vez mediante una operación explícita del operador, asociada al `issuer` y `subject` exactos del proveedor:
+
+```powershell
+cargo run -- --db <RUTA_DE_LA_BASE> identity bootstrap-owner --issuer <ISSUER_OIDC> --subject <SUBJECT_VERIFICADO> --email <CORREO_VERIFICADO> --workspace-name "CodeXPT"
+```
+
+Este comando crea el primer usuario y workspace `OWNER`; rechaza una segunda ejecución. Las identidades posteriores requieren invitación con correo verificado. Consulta [`docs/identity-v1/AUTHORIZATION-TEST-PLAN.md`](docs/identity-v1/AUTHORIZATION-TEST-PLAN.md) para las pruebas y los bloqueos de salida cloud.
 
 ## Validación local
 

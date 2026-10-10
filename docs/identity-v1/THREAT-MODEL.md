@@ -1,13 +1,13 @@
-# Identity v1 threat model (design review)
+# Identity v1 threat model (implementation review)
 
-**Status:** proposed for the hosted beta design; not a security certification. **Scope:** OIDC login, browser session, workspace membership/RBAC, review data, and human approvals across a Vercel UI and Rust API. Local mode remains a separate OS-user trust boundary.
+**Status:** design controls are partially implemented and locally tested; this is not a security certification or release approval. **Scope:** OIDC login, browser session, workspace membership/RBAC, review data, and human approvals across a Vercel UI and Rust API. Local mode remains a separate OS-user trust boundary. Task storage remains rusqlite; a controlled local provider callback test now exists, but Cognito and the hosted browser flow are untested. The authorization acceptance plan lists outstanding gates. Do not expose this branch to public traffic yet.
 
 ## Assets
 
 - Provider account identity `(issuer, subject)`, internal user id, sessions, and CSRF tokens.
 - Workspace membership and roles; task/message/decision/evidence/event records.
 - Human approval integrity and identity/audit provenance.
-- OIDC client secret and configured issuer/client/callback origins.
+- Configured OIDC issuer/client/callback origins. The Cognito public client uses Authorization Code + PKCE and does not require an app-client secret.
 
 ## Trust boundaries and actors
 
@@ -35,6 +35,8 @@
 | Role-claim confusion | A valid Cognito token contains a role/group claim that is stale or attacker-controlled | Cognito proves identity only; CodeXPT SQLx membership is the authority for workspace roles; test provider claims cannot grant or change roles. |
 | Approval provenance gap | API checks only `OWNER` and records approval without binding the exact pending decision/version/evidence | Require verified human session + same-workspace Owner + pending decision + expected resource version + decision evidence; atomically persist transition, resulting version, and provenance. |
 | Unprovisioned account / public sign-up | Arbitrary person authenticates and gets a workspace | Disable Cognito self sign-up in first beta; provision users out of band; create membership only through Owner invite flow; test unknown/disabled users cannot reach API. |
+| Ownership loss | Removing, disabling, or downgrading the final Owner leaves a workspace unmanaged | Require an active owner count check under the same transaction; ownership transfer promotes an existing member before demoting the old owner; race test concurrent changes. |
+| Invitation theft/replay | Reused or stolen invitation grants membership to another identity | Store only a high-entropy token digest; expire and consume once; bind acceptance to a verified invitee email; do not grant Owner on acceptance. |
 | User account linking collision | Same email at different issuer or changed email claims merges identities | Key external identity on `(iss, sub)`; never auto-link by email; explicit audited account-link flow only in later phase. |
 | Session replay after role removal | Old session retains access after membership revoke | Check membership/role at request time (or versioned cache invalidation); revoke sessions on account disable; test role removal affects existing sessions immediately. |
 | Instance-local session state | A revoked cookie remains valid on another warm backend instance | Use shared SQLx session persistence and test cross-instance expiry/revocation; avoid multi-instance/Lambda runtime until pool limits and consistency are validated. |
@@ -51,7 +53,7 @@
 3. Every workspace-owned resource read or write is checked against current workspace membership and action role.
 4. An approval event identifies a verified owner user and causally links the resolved task/decision; an Agent or Editor cannot issue one.
 5. Logout/revocation and role removal take effect at the next request; session expiry is enforced server-side.
-6. OAuth secrets, codes, access/refresh/id tokens, PKCE verifier, cookie value, and CSRF secret never appear in response bodies or logs.
+6. OAuth provider secrets (if a future confidential provider is added), codes, access/refresh/id tokens, PKCE verifier, cookie value, and CSRF secret never appear in response bodies or logs. The Cognito public app-client id is configuration, not a secret.
 7. Local mode stays available offline and cannot be exposed as a public or multi-user deployment.
 8. A human, an agent runtime, a provider connection, and a legacy declared actor cannot be silently substituted for one another.
 

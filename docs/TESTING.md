@@ -53,6 +53,31 @@ Verified on 2026-10-10 from `C:\projects\codexpt` on `feature/local-dashboard`. 
 
 The local dashboard is usable for manually recording review conversations; agents still exchange content through the human director. Actor labels are not authenticated. Hosted identity and infra remain follow-on work with separate acceptance gates.
 
+## Identity prototype and UX verification
+
+Verified on 2026-10-10 from `C:\projects\codexpt` after the identity prototype and responsive-dialog updates:
+
+- `cargo fmt --check`, `cargo test --all-targets` (32 passed), and `cargo clippy --all-targets --all-features -- -D warnings` passed.
+- `npm --prefix web test` (3 passed), `npm --prefix web run lint`, and `npm --prefix web run build` passed.
+- `npm --prefix web run test:e2e` passed all 5 Playwright cases, including touch search/filter controls and dialog focus/Escape behavior. The run took 18.1 seconds after build. Axe reported no WCAG 2.1 A/AA violations in the audited desktop and mobile flows.
+- `scripts/smoke.ps1` passed with a disposable local SQLite database.
+- `terraform fmt -check -recursive` and `terraform validate` passed. Validation does not mean the infrastructure is deployable; no cloud plan or apply was run.
+- Production web bundle: JavaScript 259.60 kB (79.79 kB gzip), CSS 25.17 kB (5.93 kB gzip).
+
+These checks do not close the remaining release gates in `docs/identity-v1/AUTHORIZATION-TEST-PLAN.md`: Cognito/live-domain browser behavior, full HTTP authorization matrix, production CSRF/CORS, and hosted end-to-end verification are still pending. The system has no integrated agent transport, and the 12-task comparison has not been conducted. See [`docs/VALIDATION-REPORT.md`](VALIDATION-REPORT.md) for measured metrics and scope limits.
+
+## Screen-by-screen QA before visual review
+
+Verified on 2026-10-10 before sending screenshots to the product reviewer:
+
+- `npm --prefix web run test:e2e`: 8 Playwright cases passed. The suite now captures and checks login, invitation, empty workspace, member management, and review dashboard screens at mobile (390×844) and desktop (1280×900), plus tablet dashboard behavior (768×1024).
+- Axe WCAG 2.1 A/AA reported zero violations for the tested routes and states, including the Owner member dialog. One real issue found during this pass was the mobile-only icon button for “Miembros” lacking an accessible name; it now has an explicit label. The login panel’s muted metadata and accent contrast were darkened, and its decorative watermark was removed to clear contrast violations.
+- The hosted Owner/member/invite visual flow uses synthetic Playwright API responses. It checks the member list, the invitation role, and one-time token display, but it is not evidence of Cognito, CSRF, or production API integration.
+- Login and invitation were tested against the local unconfigured identity state. Real provider sign-in, a live user account, invitation email delivery, and the deployed domain were not tested.
+- Screenshots are regenerated under `web/test-results/` and contain synthetic test identities only.
+
+The seven prior release gates and limits above still apply; this screen QA does not constitute deployment approval or hosted release certification.
+
 ## Test data and privacy
 
 Use synthetic tasks and evidence only. Tests must not call external model services or use real provider credentials. Temporary DB files must be removed by test fixtures. Do not store outputs from unrelated user conversations in test data.

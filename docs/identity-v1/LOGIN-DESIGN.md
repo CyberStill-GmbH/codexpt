@@ -1,6 +1,6 @@
-# CodeXPT login design direction (proposed)
+# CodeXPT login design and implementation review
 
-This is a visual direction, not an implemented or authenticated login. The page must never suggest that access has succeeded before the Rust API verifies the managed OIDC callback.
+The branded login and invitation acceptance pages are implemented. The page must never suggest that access has succeeded before the Rust API verifies the managed OIDC callback. A controlled local OIDC provider now exercises the callback, PKCE, signature, nonce, state and replay checks. Cognito and browser login across hosted domains remain untested; this is not yet a release-ready hosted login.
 
 ## Brief
 
@@ -49,6 +49,6 @@ At desktop, use two asymmetric columns: a concise product explanation on the lef
 - Do not put tokens, authorization codes, email addresses, or workspace secrets in local storage, URL fragments, or rendered error details.
 - The branded CodeXPT surface may use the current palette and mark. The separate managed provider page receives the same logo/colors and Spanish localization through supported branding settings.
 
-## Acceptance gate
+## Acceptance gate and current gaps
 
-Implement the page only with the real OIDC redirect and backend session flow. Revisit inspiration references during implementation, critique the result against this brief, then run keyboard, mobile, contrast, Axe, and end-to-end authentication checks. Ask the delegated reviewer to inspect the actual rendered login when a review build is available.
+The real OIDC redirect and backend session flow are implemented. Cognito uses a public app client with Authorization Code + PKCE, avoiding a client secret in Terraform state or the browser. The controlled-provider callback test, production frontend build and unit tests pass. The Cognito callback, credentialed CORS/CSRF browser flow, hosted login accessibility pass and real-domain visual review remain outstanding. Ask for the delegated visual review after a safe review deployment is available.

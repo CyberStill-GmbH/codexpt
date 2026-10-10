@@ -13,9 +13,9 @@
 - [x] README, C4, ADRs, security, operations, and verification records reflect implemented features and unauthenticated local-only limits.
 - [x] `v0.1.0-local-mvp` release reference created after tests and a clean working tree.
 
-## Identity v1 design (in progress)
+## Identity v1 implementation (in progress, not release-ready)
 
-The delegated review approved Cognito Essentials as the invite-only OIDC provider candidate, CodeXPT-owned workspace RBAC, SQLx with SQLite local/PostgreSQL hosted adapters, server-side sessions (30-minute idle/12-hour absolute), and distinct human/agent/provider identities. Three review adjustments are incorporated in ADR-0004 and `docs/identity-v1/`: Cognito does not grant roles, approvals bind a verified human to workspace/resource/version/evidence, and session revocation uses shared persistence. Keep local SQLite working. Do not enable public self-registration or deploy to AWS in this phase. Agent integrations remain separate.
+The delegated review approved Cognito as the invite-only OIDC candidate, CodeXPT-owned workspace RBAC, SQLx + SQLite for a one-instance beta, server-side sessions (30-minute idle/12-hour absolute), and distinct human/agent/provider identities. The branch implements OIDC state/nonce/PKCE, hashed sessions, Owner/Editor/Viewer membership, one-use invites, workspace task isolation, approval evidence/version binding, and the Owner invite flow. A controlled OIDC provider callback test, authorization/session tests, SQLite backup/restore (including sessions, invite, and task history), Rust API/storage tests, frontend tests, and local browser tests pass. Cognito itself, full hosted-browser authorization, cross-domain E2E, production DNS, and the full auth UI acceptance pass remain. Terraform for a single EC2 + EBS + SQLite + Caddy + S3-backup beta has been added and validated, but it has not been planned against AWS or applied. The required immutable ARM64 release artifact and verified registrar access are still missing. Do not enable public traffic or deploy until the release gates pass, a concrete costed plan is reviewed, and the DNS prerequisites are met. Agent integrations remain separate.
 
 ## Explicitly out of current scope
 
@@ -32,3 +32,11 @@ The delegated review approved Cognito Essentials as the invite-only OIDC provide
 3. Keep registration invite-only until access control and recovery are reviewed.
 4. Design cloud infrastructure and cost bounds separately; no AWS apply until a concrete Terraform plan is reviewed.
 5. Run the 12-task experiment with a frozen rubric before claiming coordination benefit.
+
+## Hosted release gates
+
+- [ ] Finish Identity v1 acceptance in `docs/identity-v1/AUTHORIZATION-TEST-PLAN.md`, including Cognito behavior and hosted-browser security tests.
+- [x] Use one SQLite database file for tasks and identity for the approved single-instance beta; PostgreSQL and multi-instance operation remain deferred.
+- [ ] Produce a reviewed immutable Linux ARM64 artifact, then generate a deployable Terraform plan with current costs; review the plan before applying.
+- [ ] Resolve registrar access, audit current DNS/DNSSEC records, select one DNS authority, and prepare the rollback before changing delegation.
+- [ ] Verify `codexpt.jappi.net.pe` + `api.codexpt.jappi.net.pe` DNS and callback URI, then deploy and have the delegated reviewer inspect the real login and workspace.

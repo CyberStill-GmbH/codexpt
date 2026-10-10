@@ -11,23 +11,23 @@
 
 :root {
   font-family: 'IBM Plex Sans', sans-serif;
-  color: #20211f;
-  background: #f3f1eb;
+  color: #171c24;
+  background: #f7f6f2;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --paper: #f3f1eb;
-  --sheet: #fbfaf6;
-  --ink: #20211f;
-  --muted: #62635c;
-  --faint: #62635c;
-  --rule: #dfddd4;
-  --rule-dark: #c9c6bb;
-  --red: #ad4937;
+  --paper: #f7f6f2;
+  --sheet: #ffffff;
+  --ink: #171c24;
+  --muted: #58616d;
+  --faint: #68727c;
+  --rule: #e2e0d9;
+  --rule-dark: #d4d2cb;
+  --red: #a34332;
   --red-pale: #f3e7e1;
-  --green: #49694f;
-  --green-pale: #e9eee8;
-  --blue: #536b82;
+  --green: #0f6956;
+  --green-pale: #e7f1ed;
+  --blue: #345fad;
   --mono: 'IBM Plex Mono', monospace;
   font-optical-sizing: auto;
 }

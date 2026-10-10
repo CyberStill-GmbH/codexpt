@@ -1,16 +1,19 @@
 use std::{path::Path, time::Duration};
 
 use chrono::{SecondsFormat, Utc};
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OptionalExtension, Transaction, TransactionBehavior, backup::Backup, params,
+};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::domain::{AppError, HumanDecision, Message, MessageStatus, Task, TaskEvent, TaskStatus};
 
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 pub struct Store {
     connection: Connection,
+    workspace_id: Option<String>,
 }
 
 impl Store {
@@ -26,7 +29,106 @@ impl Store {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         migrate(&mut connection)?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            workspace_id: None,
+        })
+    }
+
+    /// Create a consistent online SQLite backup without copying a live WAL database.
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<(), AppError> {
+        let destination = destination.as_ref();
+        if destination.exists() {
+            return Err(AppError::InvalidInput(
+                "backup destination already exists".into(),
+            ));
+        }
+        if let Some(parent) = destination
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                AppError::InvalidInput(format!("cannot create backup directory: {error}"))
+            })?;
+        }
+        let mut backup = Connection::open(destination)?;
+        {
+            let operation = Backup::new(&self.connection, &mut backup)?;
+            operation.run_to_completion(128, Duration::from_millis(10), None)?;
+        }
+        let integrity: String = backup.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            let _ = std::fs::remove_file(destination);
+            return Err(AppError::InvalidInput(
+                "SQLite backup integrity check failed".into(),
+            ));
+        }
+        drop(backup);
+        Ok(())
+    }
+
+    /// Restore a consistent backup to a new path. Existing destinations are never overwritten.
+    pub fn restore_from_backup(
+        source: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+    ) -> Result<(), AppError> {
+        let source = source.as_ref();
+        let destination = destination.as_ref();
+        if !source.is_file() {
+            return Err(AppError::InvalidInput(
+                "backup source does not exist".into(),
+            ));
+        }
+        if destination.exists()
+            || sidecar_path(destination, "-wal").exists()
+            || sidecar_path(destination, "-shm").exists()
+        {
+            return Err(AppError::InvalidInput(
+                "restore destination or SQLite sidecar already exists; preserve it and choose a new path".into(),
+            ));
+        }
+        let parent = destination
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        if let Some(parent) = parent {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                AppError::InvalidInput(format!("cannot create restore directory: {error}"))
+            })?;
+        }
+        let temporary = destination.with_extension(format!("restore-{}.tmp", Uuid::new_v4()));
+        let result = (|| {
+            let source_connection = Connection::open_with_flags(
+                source,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
+            let mut restored = Connection::open(&temporary)?;
+            {
+                let operation = Backup::new(&source_connection, &mut restored)?;
+                operation.run_to_completion(128, Duration::from_millis(10), None)?;
+            }
+            let integrity: String =
+                restored.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+            if integrity != "ok" {
+                return Err(AppError::InvalidInput(
+                    "restored SQLite database failed integrity_check".into(),
+                ));
+            }
+            drop(restored);
+            drop(source_connection);
+            std::fs::rename(&temporary, destination).map_err(|error| {
+                AppError::InvalidInput(format!("cannot publish restored database: {error}"))
+            })?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        result
+    }
+
+    pub fn set_workspace_context(&mut self, workspace_id: Option<&str>) {
+        self.workspace_id = workspace_id.map(str::to_owned);
     }
 
     pub fn create_task(
@@ -34,6 +136,27 @@ impl Store {
         title: &str,
         description: &str,
         actor: &str,
+    ) -> Result<Task, AppError> {
+        self.create_task_inner(title, description, actor, None)
+    }
+
+    pub(crate) fn create_task_verified_human(
+        &mut self,
+        title: &str,
+        description: &str,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Task, AppError> {
+        let actor = format!("human:{user_id}");
+        self.create_task_inner(title, description, &actor, Some((user_id, session_id)))
+    }
+
+    fn create_task_inner(
+        &mut self,
+        title: &str,
+        description: &str,
+        actor: &str,
+        verified_human: Option<(&str, &str)>,
     ) -> Result<Task, AppError> {
         if title.trim().is_empty() || actor.trim().is_empty() {
             return Err(AppError::InvalidInput(
@@ -49,17 +172,24 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
-            "INSERT INTO tasks (task_id, title, description, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 'open', ?4, ?4)",
-            params![task_id, title.trim(), description, now],
+            "INSERT INTO tasks (task_id, title, description, status, created_at, updated_at, workspace_id)
+             VALUES (?1, ?2, ?3, 'open', ?4, ?4, ?5)",
+            params![task_id, title.trim(), description, now, self.workspace_id.as_deref()],
         )?;
+        let mut details = serde_json::json!({ "status": "open" });
+        if let Some((user_id, session_id)) = verified_human {
+            details["verified_human"] = serde_json::json!({
+                "user_id": user_id,
+                "session_id": session_id,
+            });
+        }
         append_event(
             &transaction,
             &task_id,
             "task_created",
             actor,
             &task_id,
-            serde_json::json!({ "status": "open" }),
+            details,
         )?;
         transaction.commit()?;
         self.get_task(&task_id)?
@@ -69,11 +199,11 @@ impl Store {
     pub fn get_task(&self, task_id: &str) -> Result<Option<Task>, AppError> {
         self.connection
             .query_row(
-                "SELECT t.task_id, t.title, t.description, t.status,
+            "SELECT t.task_id, t.title, t.description, t.status,
                         EXISTS(SELECT 1 FROM human_decisions d WHERE d.task_id = t.task_id AND d.status = 'pending'),
-                        t.created_at, t.updated_at
-                 FROM tasks t WHERE t.task_id = ?1",
-                [task_id],
+                        t.created_at, t.updated_at, t.version
+                 FROM tasks t WHERE t.task_id = ?1 AND (?2 IS NULL OR t.workspace_id = ?2)",
+                params![task_id, self.workspace_id.as_deref()],
                 row_to_task,
             )
             .optional()
@@ -84,10 +214,11 @@ impl Store {
         let mut statement = self.connection.prepare(
             "SELECT t.task_id, t.title, t.description, t.status,
                     EXISTS(SELECT 1 FROM human_decisions d WHERE d.task_id = t.task_id AND d.status = 'pending'),
-                    t.created_at, t.updated_at
-             FROM tasks t ORDER BY t.updated_at DESC, t.task_id ASC",
+                    t.created_at, t.updated_at, t.version
+             FROM tasks t WHERE (?1 IS NULL OR t.workspace_id = ?1)
+             ORDER BY t.updated_at DESC, t.task_id ASC",
         )?;
-        let rows = statement.query_map([], row_to_task)?;
+        let rows = statement.query_map([self.workspace_id.as_deref()], row_to_task)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
     }
 
@@ -95,8 +226,10 @@ impl Store {
         self.connection
             .query_row(
                 "SELECT decision_id, task_id, question, requested_by, status, created_at
-                 FROM human_decisions WHERE task_id = ?1 AND status = 'pending'",
-                [task_id],
+                 FROM human_decisions WHERE task_id = ?1 AND status = 'pending'
+                   AND EXISTS (SELECT 1 FROM tasks t WHERE t.task_id = human_decisions.task_id
+                               AND (?2 IS NULL OR t.workspace_id = ?2))",
+                params![task_id, self.workspace_id.as_deref()],
                 |row| {
                     Ok(HumanDecision {
                         decision_id: row.get(0)?,
@@ -120,6 +253,41 @@ impl Store {
         actor: &str,
         correlation_id: &str,
     ) -> Result<Task, AppError> {
+        self.transition_task_inner(task_id, expected, next, actor, correlation_id, None)
+    }
+
+    #[allow(clippy::too_many_arguments)] // The authenticated principal and transition evidence are recorded together.
+    pub(crate) fn transition_task_verified_human(
+        &mut self,
+        task_id: &str,
+        expected: TaskStatus,
+        next: TaskStatus,
+        user_id: &str,
+        session_id: &str,
+        expected_version: i64,
+        correlation_id: &str,
+    ) -> Result<Task, AppError> {
+        let actor = format!("human:{user_id}");
+        self.transition_task_inner(
+            task_id,
+            expected,
+            next,
+            &actor,
+            correlation_id,
+            Some((user_id, session_id, expected_version)),
+        )
+    }
+
+    fn transition_task_inner(
+        &mut self,
+        task_id: &str,
+        expected: TaskStatus,
+        next: TaskStatus,
+        actor: &str,
+        correlation_id: &str,
+        verified_human: Option<(&str, &str, i64)>,
+    ) -> Result<Task, AppError> {
+        self.ensure_task_in_scope(task_id)?;
         if !expected.can_transition_to(next) {
             return Err(AppError::InvalidTransition {
                 from: expected.to_string(),
@@ -133,23 +301,31 @@ impl Store {
         }
         validate_length("actor", actor, 120)?;
         validate_length("correlation_id", correlation_id, 128)?;
-        if next == TaskStatus::Approved && actor != "human:cesar" {
+        if next == TaskStatus::Approved && actor != "human:cesar" && verified_human.is_none() {
             return Err(AppError::HumanApprovalRequired);
         }
 
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current: Option<String> = transaction
+        let current: Option<(String, i64)> = transaction
             .query_row(
-                "SELECT status FROM tasks WHERE task_id = ?1",
+                "SELECT status, version FROM tasks WHERE task_id = ?1",
                 [task_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        let Some(current) = current else {
+        let Some((current, current_version)) = current else {
             return Err(AppError::TaskNotFound(task_id.into()));
         };
+        if let Some((_, _, expected_version)) = verified_human
+            && current_version != expected_version
+        {
+            return Err(AppError::StaleState {
+                expected: format!("version {expected_version}"),
+                actual: format!("version {current_version}"),
+            });
+        }
         if current != expected.as_str() {
             return Err(AppError::StaleState {
                 expected: expected.to_string(),
@@ -165,10 +341,31 @@ impl Store {
             return Err(AppError::PendingDecision);
         }
 
+        let approval_evidence = if next == TaskStatus::Approved && verified_human.is_some() {
+            let mut statement = transaction.prepare(
+                "SELECT evidence_refs_json FROM messages WHERE task_id = ?1 ORDER BY created_at, message_id",
+            )?;
+            let rows = statement.query_map([task_id], |row| row.get::<_, String>(0))?;
+            let mut evidence = Vec::new();
+            for row in rows {
+                evidence.extend(serde_json::from_str::<Vec<crate::domain::EvidenceRef>>(
+                    &row?,
+                )?);
+            }
+            if evidence.is_empty() {
+                return Err(AppError::InvalidInput(
+                    "approval requires at least one evidence reference".into(),
+                ));
+            }
+            evidence
+        } else {
+            Vec::new()
+        };
+
         let timestamp = now();
         transaction.execute(
-            "UPDATE tasks SET status = ?2, updated_at = ?3 WHERE task_id = ?1 AND status = ?4",
-            params![task_id, next.as_str(), timestamp, expected.as_str()],
+            "UPDATE tasks SET status = ?2, updated_at = ?3, version = version + 1 WHERE task_id = ?1 AND status = ?4 AND version = ?5",
+            params![task_id, next.as_str(), timestamp, expected.as_str(), current_version],
         )?;
         if transaction.changes() != 1 {
             return Err(AppError::StaleState {
@@ -176,13 +373,27 @@ impl Store {
                 actual: "changed by another writer".into(),
             });
         }
+        let mut details = serde_json::json!({ "from": expected, "to": next, "expected_version": current_version, "resulting_version": current_version + 1 });
+        if let Some((user_id, session_id, expected_version)) = verified_human {
+            details["verified_human"] = serde_json::json!({
+                "user_id": user_id,
+                "session_id": session_id,
+            });
+            if next == TaskStatus::Approved {
+                details["workspace_id"] = serde_json::json!(self.workspace_id);
+                details["resource_id"] = serde_json::json!(task_id);
+                details["expected_version"] = serde_json::json!(expected_version);
+                details["evidence_refs"] = serde_json::to_value(approval_evidence)?;
+                details["approved_at"] = serde_json::json!(timestamp);
+            }
+        }
         append_event(
             &transaction,
             task_id,
             "task_transitioned",
             actor,
             correlation_id,
-            serde_json::json!({ "from": expected, "to": next }),
+            details,
         )?;
         transaction.commit()?;
         self.get_task(task_id)?
@@ -197,6 +408,46 @@ impl Store {
         actor: &str,
         correlation_id: &str,
     ) -> Result<(), AppError> {
+        self.request_human_decision_inner(
+            task_id,
+            decision_id,
+            question,
+            actor,
+            correlation_id,
+            None,
+        )
+    }
+
+    pub(crate) fn request_human_decision_verified_human(
+        &mut self,
+        task_id: &str,
+        decision_id: &str,
+        question: &str,
+        user_id: &str,
+        session_id: &str,
+        correlation_id: &str,
+    ) -> Result<(), AppError> {
+        let actor = format!("human:{user_id}");
+        self.request_human_decision_inner(
+            task_id,
+            decision_id,
+            question,
+            &actor,
+            correlation_id,
+            Some((user_id, session_id)),
+        )
+    }
+
+    fn request_human_decision_inner(
+        &mut self,
+        task_id: &str,
+        decision_id: &str,
+        question: &str,
+        actor: &str,
+        correlation_id: &str,
+        verified_human: Option<(&str, &str)>,
+    ) -> Result<(), AppError> {
+        self.ensure_task_in_scope(task_id)?;
         if decision_id.trim().is_empty() || question.trim().is_empty() || actor.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "decision_id, question and actor must not be empty".into(),
@@ -232,16 +483,27 @@ impl Store {
             params![decision_id, task_id, status, question.trim(), actor, timestamp],
         )?;
         transaction.execute(
-            "UPDATE tasks SET updated_at = ?2 WHERE task_id = ?1",
+            "UPDATE tasks SET updated_at = ?2, version = version + 1 WHERE task_id = ?1",
             params![task_id, timestamp],
         )?;
+        let mut details = serde_json::json!({
+            "decision_id": decision_id,
+            "state_preserved": status,
+            "question": question.trim()
+        });
+        if let Some((user_id, session_id)) = verified_human {
+            details["verified_human"] = serde_json::json!({
+                "user_id": user_id,
+                "session_id": session_id,
+            });
+        }
         append_event(
             &transaction,
             task_id,
             "human_decision_requested",
             actor,
             correlation_id,
-            serde_json::json!({ "decision_id": decision_id, "state_preserved": status, "question": question.trim() }),
+            details,
         )?;
         transaction.commit()?;
         Ok(())
@@ -255,7 +517,40 @@ impl Store {
         actor: &str,
         correlation_id: &str,
     ) -> Result<(), AppError> {
-        if actor != "human:cesar" {
+        self.answer_human_decision_inner(task_id, decision_id, answer, actor, correlation_id, None)
+    }
+
+    pub(crate) fn answer_human_decision_verified_human(
+        &mut self,
+        task_id: &str,
+        decision_id: &str,
+        answer: &str,
+        user_id: &str,
+        session_id: &str,
+        correlation_id: &str,
+    ) -> Result<(), AppError> {
+        let actor = format!("human:{user_id}");
+        self.answer_human_decision_inner(
+            task_id,
+            decision_id,
+            answer,
+            &actor,
+            correlation_id,
+            Some((user_id, session_id)),
+        )
+    }
+
+    fn answer_human_decision_inner(
+        &mut self,
+        task_id: &str,
+        decision_id: &str,
+        answer: &str,
+        actor: &str,
+        correlation_id: &str,
+        verified_human: Option<(&str, &str)>,
+    ) -> Result<(), AppError> {
+        self.ensure_task_in_scope(task_id)?;
+        if actor != "human:cesar" && verified_human.is_none() {
             return Err(AppError::HumanApprovalRequired);
         }
         if answer.trim().is_empty() {
@@ -287,22 +582,48 @@ impl Store {
             params![decision_id, task_id, answer.trim(), actor, timestamp],
         )?;
         transaction.execute(
-            "UPDATE tasks SET updated_at = ?2 WHERE task_id = ?1",
+            "UPDATE tasks SET updated_at = ?2, version = version + 1 WHERE task_id = ?1",
             params![task_id, timestamp],
         )?;
+        let mut details =
+            serde_json::json!({ "decision_id": decision_id, "answer": answer.trim() });
+        if let Some((user_id, session_id)) = verified_human {
+            details["verified_human"] = serde_json::json!({
+                "user_id": user_id,
+                "session_id": session_id,
+            });
+        }
         append_event(
             &transaction,
             task_id,
             "human_decision_answered",
             actor,
             correlation_id,
-            serde_json::json!({ "decision_id": decision_id, "answer": answer.trim() }),
+            details,
         )?;
         transaction.commit()?;
         Ok(())
     }
 
     pub fn insert_message(&mut self, message: &Message) -> Result<bool, AppError> {
+        self.insert_message_inner(message, None)
+    }
+
+    pub(crate) fn insert_message_verified_human(
+        &mut self,
+        message: &Message,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<bool, AppError> {
+        self.insert_message_inner(message, Some((user_id, session_id)))
+    }
+
+    fn insert_message_inner(
+        &mut self,
+        message: &Message,
+        verified_human: Option<(&str, &str)>,
+    ) -> Result<bool, AppError> {
+        self.ensure_task_in_scope(&message.task_id)?;
         message.validate()?;
         let transaction = self
             .connection
@@ -375,22 +696,33 @@ impl Store {
             ],
         )?;
         transaction.execute(
-            "UPDATE tasks SET updated_at = ?2 WHERE task_id = ?1",
+            "UPDATE tasks SET updated_at = ?2, version = version + 1 WHERE task_id = ?1",
             params![message.task_id, message.created_at],
         )?;
+        let mut details = serde_json::json!({
+            "message_id": message.message_id,
+            "recipient": message.recipient
+        });
+        if let Some((user_id, session_id)) = verified_human {
+            details["verified_human"] = serde_json::json!({
+                "user_id": user_id,
+                "session_id": session_id,
+            });
+        }
         append_event(
             &transaction,
             &message.task_id,
             "message_recorded",
             &message.sender,
             &message.correlation_id,
-            serde_json::json!({ "message_id": message.message_id, "recipient": message.recipient }),
+            details,
         )?;
         transaction.commit()?;
         Ok(true)
     }
 
     pub fn list_messages(&self, task_id: &str) -> Result<Vec<Message>, AppError> {
+        self.ensure_task_in_scope(task_id)?;
         let mut statement = self.connection.prepare(
             "SELECT schema_version, message_id, task_id, sender, recipient, correlation_id, parent_id,
                     status, body, evidence_refs_json, created_at
@@ -434,6 +766,7 @@ impl Store {
     }
 
     pub fn list_events(&self, task_id: &str) -> Result<Vec<TaskEvent>, AppError> {
+        self.ensure_task_in_scope(task_id)?;
         let mut statement = self.connection.prepare(
             "SELECT sequence, task_id, event_type, actor, correlation_id, details_json, occurred_at
              FROM task_events WHERE task_id = ?1 ORDER BY sequence ASC",
@@ -459,6 +792,20 @@ impl Store {
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
     }
+
+    fn ensure_task_in_scope(&self, task_id: &str) -> Result<(), AppError> {
+        if self.get_task(task_id)?.is_some() {
+            Ok(())
+        } else {
+            Err(AppError::TaskNotFound(task_id.into()))
+        }
+    }
+}
+
+fn sidecar_path(database: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut value = database.as_os_str().to_owned();
+    value.push(suffix);
+    value.into()
 }
 
 fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
@@ -474,6 +821,7 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         pending_decision: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        version: row.get(7)?,
     })
 }
 
@@ -518,6 +866,23 @@ fn migrate(connection: &mut Connection) -> Result<(), AppError> {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute_batch(SCHEMA)?;
         transaction.pragma_update(None, "user_version", 1)?;
+        transaction.commit()?;
+    }
+    if version < 2 {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "ALTER TABLE tasks ADD COLUMN workspace_id TEXT;
+             CREATE INDEX tasks_workspace_order ON tasks(workspace_id, updated_at DESC, task_id ASC);",
+        )?;
+        transaction.pragma_update(None, "user_version", 2)?;
+        transaction.commit()?;
+    }
+    if version < 3 {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0);",
+        )?;
+        transaction.pragma_update(None, "user_version", 3)?;
         transaction.commit()?;
     }
     Ok(())
@@ -936,6 +1301,187 @@ mod tests {
     }
 
     #[test]
+    fn online_backup_restores_tasks_messages_and_ordered_events() {
+        let source = db_path();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let backup = backup_dir.path().join("state.sqlite3");
+        let restored = backup_dir.path().join("restored.sqlite3");
+        let mut store = Store::open(&source).unwrap();
+        let journal_mode: String = store
+            .connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        let task = store
+            .create_task("recover me", "restore exercise", "human:local")
+            .unwrap();
+        store
+            .transition_task(
+                &task.task_id,
+                TaskStatus::Open,
+                TaskStatus::Proposed,
+                "agent:codex",
+                "restore-1",
+            )
+            .unwrap();
+        store
+            .insert_message(&new_message(
+                &task.task_id,
+                "restore-message",
+                "durable evidence",
+            ))
+            .unwrap();
+
+        store.backup_to(&backup).unwrap();
+        Store::restore_from_backup(&backup, &restored).unwrap();
+        let restored_store = Store::open(&restored).unwrap();
+        assert_eq!(
+            restored_store
+                .get_task(&task.task_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            TaskStatus::Proposed
+        );
+        assert_eq!(
+            restored_store.list_messages(&task.task_id).unwrap()[0].message_id,
+            "restore-message"
+        );
+        let events = restored_store.list_events(&task.task_id).unwrap();
+        assert_eq!(events.len(), 3);
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+        assert!(Store::restore_from_backup(&backup, &restored).is_err());
+    }
+
+    #[tokio::test]
+    async fn online_backup_restores_identity_session_invite_and_task_history() {
+        let source = db_path();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let backup = backup_dir.path().join("hosted-state.sqlite3");
+        let restored = backup_dir.path().join("hosted-restored.sqlite3");
+
+        let mut store = Store::open(&source).unwrap();
+        let journal_mode: String = store
+            .connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        let task = store
+            .create_task("recover hosted state", "identity and audit", "human:legacy")
+            .unwrap();
+        store
+            .transition_task(
+                &task.task_id,
+                TaskStatus::Open,
+                TaskStatus::Proposed,
+                "agent:codex",
+                "recovery-correlation",
+            )
+            .unwrap();
+
+        let identities = crate::identity::IdentityStore::connect_sqlite(&source, 1)
+            .await
+            .unwrap();
+        let (owner_id, workspace) = identities
+            .bootstrap_first_owner(
+                "https://issuer.example.test",
+                "owner-subject",
+                "owner@example.test",
+                "Recovery workspace",
+            )
+            .await
+            .unwrap();
+        let owner_session = identities.create_session(&owner_id).await.unwrap();
+        identities
+            .create_auth_transaction("restore-state", "restore-nonce", "restore-verifier")
+            .await
+            .unwrap();
+        let invitation = identities
+            .create_invite(
+                &owner_id,
+                Some(&owner_session.session_id),
+                &workspace.workspace_id,
+                "editor@example.test",
+                crate::identity::InviteRole::Editor,
+            )
+            .await
+            .unwrap();
+        let editor_id = identities
+            .authenticate_identity(
+                "https://issuer.example.test",
+                "editor-subject",
+                Some("editor@example.test"),
+                true,
+            )
+            .await
+            .unwrap();
+
+        store.backup_to(&backup).unwrap();
+        Store::restore_from_backup(&backup, &restored).unwrap();
+
+        let restored_store = Store::open(&restored).unwrap();
+        assert_eq!(
+            restored_store
+                .get_task(&task.task_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            TaskStatus::Proposed
+        );
+        assert_eq!(restored_store.list_events(&task.task_id).unwrap().len(), 2);
+        let restored_identities = crate::identity::IdentityStore::connect_sqlite(&restored, 1)
+            .await
+            .unwrap();
+        let membership = restored_identities
+            .membership(&owner_id, &workspace.workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(membership.role, crate::identity::WorkspaceRole::Owner);
+        let invalidated = restored_identities
+            .invalidate_auth_state_after_restore()
+            .await
+            .unwrap();
+        assert_eq!(invalidated.sessions_revoked, 1);
+        assert_eq!(invalidated.login_transactions_consumed, 1);
+        assert_eq!(invalidated.pending_invites_revoked, 1);
+        assert!(
+            restored_identities
+                .resolve_session(&owner_session.raw_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            restored_identities
+                .consume_auth_transaction("restore-state")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            restored_identities
+                .accept_invite(&invitation.raw_token, &editor_id, None)
+                .await,
+            Err(crate::identity::IdentityError::NotFound)
+        ));
+        let recovery_events: i64 = Connection::open(&restored)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM identity_audit_events
+                 WHERE action = 'recovery.auth_state_invalidated' AND reason_code = 'database_restore'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(recovery_events, 1);
+    }
+
+    #[test]
     fn message_requires_valid_evidence_hash() {
         let path = db_path();
         let mut store = Store::open(&path).unwrap();
@@ -972,7 +1518,35 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 3);
+    }
+
+    #[test]
+    fn workspace_scope_hides_other_workspaces_and_legacy_local_records() {
+        let path = db_path();
+        let mut store = Store::open(&path).unwrap();
+        let legacy = store.create_task("legacy", "old", "human:cesar").unwrap();
+        store.set_workspace_context(Some("workspace-a"));
+        let task_a = store.create_task("A", "private A", "human:user-a").unwrap();
+        store.set_workspace_context(Some("workspace-b"));
+        let task_b = store.create_task("B", "private B", "human:user-b").unwrap();
+        assert_eq!(store.list_tasks().unwrap().len(), 1);
+        assert!(store.get_task(&task_a.task_id).unwrap().is_none());
+        assert!(matches!(
+            store.transition_task(
+                &task_a.task_id,
+                TaskStatus::Open,
+                TaskStatus::Proposed,
+                "human:user-b",
+                "scope-test"
+            ),
+            Err(AppError::TaskNotFound(_))
+        ));
+        store.set_workspace_context(Some("workspace-a"));
+        assert_eq!(store.list_tasks().unwrap()[0].task_id, task_a.task_id);
+        assert!(store.get_task(&legacy.task_id).unwrap().is_none());
+        store.set_workspace_context(Some("workspace-b"));
+        assert_eq!(store.list_tasks().unwrap()[0].task_id, task_b.task_id);
     }
 
     #[test]

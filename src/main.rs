@@ -4,6 +4,7 @@ use chrono::{SecondsFormat, Utc};
 use clap::{Parser, Subcommand};
 use codexpt::{
     EvidenceRef, Message, MessageStatus, Store, TaskStatus, domain::MESSAGE_SCHEMA_VERSION,
+    identity::IdentityStore,
 };
 use uuid::Uuid;
 
@@ -23,6 +24,16 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Init,
+    /// Create a consistent SQLite backup while the service is running.
+    Backup {
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Restore a backup to a new database path; the destination must not exist.
+    Restore {
+        #[arg(long)]
+        backup: PathBuf,
+    },
     Serve {
         #[arg(long, default_value_t = 4173)]
         port: u16,
@@ -38,10 +49,30 @@ enum Command {
     Events {
         task_id: String,
     },
+    Identity {
+        #[command(subcommand)]
+        command: IdentityCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum IdentityCommand {
+    /// Explicit operator-only bootstrap for the first verified workspace Owner.
+    BootstrapOwner {
+        #[arg(long)]
+        issuer: String,
+        #[arg(long)]
+        subject: String,
+        #[arg(long)]
+        email: String,
+        #[arg(long)]
+        workspace_name: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 enum TaskCommand {
+    List,
     Create {
         #[arg(long)]
         title: String,
@@ -123,11 +154,50 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let db = cli.db;
     match cli.command {
         Command::Serve { port } => codexpt::web::serve(db, port).await?,
+        Command::Backup { output } => {
+            let store = Store::open(&db)?;
+            store.backup_to(&output)?;
+            println!("created consistent backup at {}", output.display());
+        }
+        Command::Restore { backup } => {
+            Store::restore_from_backup(&backup, &db)?;
+            let identity = IdentityStore::connect_sqlite(&db, 1).await?;
+            let invalidated = identity.invalidate_auth_state_after_restore().await?;
+            println!(
+                "restored backup to {}; revoked {} sessions, consumed {} pending login transactions, and revoked {} pending invites",
+                db.display(),
+                invalidated.sessions_revoked,
+                invalidated.login_transactions_consumed,
+                invalidated.pending_invites_revoked,
+            );
+        }
+        Command::Identity {
+            command:
+                IdentityCommand::BootstrapOwner {
+                    issuer,
+                    subject,
+                    email,
+                    workspace_name,
+                },
+        } => {
+            let identity = IdentityStore::connect_sqlite(&db, 1).await?;
+            let (user_id, workspace) = identity
+                .bootstrap_first_owner(&issuer, &subject, &email, &workspace_name)
+                .await?;
+            print_json(&serde_json::json!({
+                "user_id": user_id,
+                "workspace_id": workspace.workspace_id,
+                "workspace_name": workspace.name,
+                "role": "OWNER",
+                "note": "Bootstrap assigns Owner only to the exact operator-supplied OIDC issuer and subject."
+            }))?;
+        }
         command => {
             let mut store = Store::open(&db)?;
             match command {
                 Command::Init => println!("initialized {}", db.display()),
                 Command::Task { command } => match command {
+                    TaskCommand::List => print_json(&store.list_tasks()?)?,
                     TaskCommand::Create {
                         title,
                         description,
@@ -235,6 +305,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 Command::Events { task_id } => print_json(&store.list_events(&task_id)?)?,
                 Command::Serve { .. } => unreachable!("serve is handled before opening SQLite"),
+                Command::Backup { .. } | Command::Restore { .. } => unreachable!(
+                    "backup and restore are handled before opening the destination database"
+                ),
+                Command::Identity { .. } => {
+                    unreachable!("identity commands are handled before opening the task store")
+                }
             }
         }
     }

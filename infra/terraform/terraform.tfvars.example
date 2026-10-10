@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars locally and fill these values before planning.
+# The app artifact must be a reviewed Linux ARM64 build; the checksum is verified on EC2.
+app_release_url    = "https://example.invalid/codexpt-linux-arm64"
+app_release_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+budget_alert_email = "owner@example.invalid"
+monthly_budget_usd = 20

@@ -189,6 +189,7 @@ pub struct Task {
     pub description: String,
     pub status: TaskStatus,
     pub pending_decision: bool,
+    pub version: i64,
     pub created_at: String,
     pub updated_at: String,
 }

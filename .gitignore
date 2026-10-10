@@ -1,2 +1,7 @@
 /target
 /.codexpt
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
