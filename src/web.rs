@@ -281,6 +281,7 @@ fn router_with_identity_and_origins(
         .route("/login", get(frontend_index))
         .route("/invite", get(frontend_index))
         .route("/codexpt.svg", get(frontend_favicon))
+        .route("/favicon.svg", get(frontend_favicon_simple))
         .route("/assets/{*path}", get(frontend_asset))
         .fallback(get(not_found))
         .with_state(state.clone())
@@ -317,7 +318,12 @@ fn oidc_state(state: &AppState) -> Option<OidcState> {
 
 async fn auth_status(State(state): State<AppState>) -> Response {
     let configured = state.identity.is_some() && state.oidc.is_some();
-    Json(serde_json::json!({"configured":configured,"provider":"OpenID Connect"})).into_response()
+    let provider = state
+        .oidc
+        .as_ref()
+        .map(oidc::OidcConfig::provider_label)
+        .unwrap_or("proveedor de identidad");
+    Json(serde_json::json!({"configured":configured,"provider":provider})).into_response()
 }
 
 async fn auth_login(State(state): State<AppState>) -> Response {
@@ -983,6 +989,10 @@ async fn frontend_index() -> Response {
 
 async fn frontend_favicon() -> Response {
     embedded_asset("codexpt.svg")
+}
+
+async fn frontend_favicon_simple() -> Response {
+    embedded_asset("favicon.svg")
 }
 
 async fn frontend_asset(Path(path): Path<String>) -> Response {

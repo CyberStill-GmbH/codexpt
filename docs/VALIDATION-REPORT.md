@@ -37,3 +37,15 @@ Additional gates passed: `cargo fmt --check`, `cargo clippy --all-targets --all-
 ## Screenshots
 
 Playwright regenerated login, invitation, empty workspace, member management, and dashboard captures under `web/test-results/`. They represent local screens and synthetic hosted UI fixtures; they are not screenshots of a deployed or provider-authenticated cloud MVP.
+
+## Current OpenAI-auth and architecture follow-up
+
+**Date:** 2026-10-10
+**Source:** local branch `feature/local-dashboard`; no cloud deployment
+**Result:** 33 Rust tests, 5 Vitest tests and 11 Playwright cases passed; Terraform format and validation passed.
+
+The E2E suite covers the OpenAI-configured sign-in label and explicit CodeXPT role copy, accessible responsive flows, long review titles at 320/390/768/1280 px, member-dialog focus handling and logo/favicon routing. The 5 Vitest tests, frontend lint/build, CLI smoke and the Rust suite passed. The build emitted 262.46 kB JavaScript (80.70 kB gzip) and 26.41 kB CSS (6.14 kB gzip). The first parallel clippy/E2E attempt overlapped a Vite build replacing tracked embedded assets; serial reruns passed. This report records the clean serial results.
+
+Terraform validation is syntax/provider validation only. No plan, apply, AWS resource, Vercel deployment, DNS or certificate change was made. No live OpenAI OAuth client has been issued/registered, so the OpenAI website sign-in flow has not been exercised with a real account. The dashboard's identity/invitation tests still use local or synthetic identity responses.
+
+ChatGPT reviewed the proposed agent workflow in the exact authorized conversation. Its decisions are recorded in [ADR-0006](adr/0006-local-agent-runner-inbox.md) (user-controlled Codex runner, durable inbox, outbound polling, no agent approval) and [ADR-0007](adr/0007-workers-d1-hosting-spike.md) (retain the reference backend and test Workers/D1 in isolation). These ADRs are specifications, not implementation evidence. Pairing, agent credentials, job leases, MCP tools, OAuth consent for a local runner, and the Workers/D1 spike remain unimplemented. No autonomous two-agent collaboration or no-additional-API-cost flow has yet been demonstrated.

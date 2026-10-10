@@ -4,7 +4,7 @@ These contracts guide the Identity v1 implementation. The current branch has a f
 
 ## Trusted principal
 
-Only the session-verification adapter may construct a hosted `AuthenticatedPrincipal`. Client-supplied `actor`, `role`, `user_id`, `workspace_id`, issuer, or subject fields are never evidence of identity or permission. OIDC/Cognito establishes an external identity; only CodeXPT's current workspace membership establishes `OWNER`, `EDITOR`, or `VIEWER`. Provider groups/claims do not confer CodeXPT roles.
+Only the session-verification adapter may construct a hosted `AuthenticatedPrincipal`. Client-supplied `actor`, `role`, `user_id`, `workspace_id`, issuer, or subject fields are never evidence of identity or permission. The selected OIDC provider (Cognito or, when enabled, OpenAI) establishes an external identity; only CodeXPT's current workspace membership establishes `OWNER`, `EDITOR`, or `VIEWER`. Provider groups/claims do not confer CodeXPT roles. OpenAI identity sign-in does not expose ChatGPT conversations.
 
 ```text
 AuthenticatedPrincipal {
@@ -39,6 +39,7 @@ LegacyActorAssertion { original_label, provenance: DeclaredUnverified }
 - A provider connection represents a workspace's grant to an external service. It is not an authenticated CodeXPT user or agent and its OAuth secret is not returned to the browser.
 - Existing event actor strings, including `human:cesar`, remain immutable `LegacyActorAssertion { original_label, DeclaredUnverified }`. Migration never maps these values to `user_id` or treats them as verified. Any later attribution must be an explicit, separately audited link that preserves the original assertion.
 - Identity v1 implements human identity only. Agent identity and provider connection are documented extension points and receive no implicit authorization in v1.
+- The planned user-controlled Codex runner and separate ChatGPT web/MCP path are specified in [ADR-0006](../adr/0006-local-agent-runner-inbox.md). Agent credentials are deferred work; when implemented, they must be scoped independently and can never invoke `decision.approve` or act with the owner's human authority.
 
 ## Authorization service
 
@@ -68,19 +69,19 @@ Every lookup of a task, decision, message, evidence reference, or event must be 
 - The principal has a current `OWNER` membership in the same `workspace_id` as the decision and task. Owner in one workspace grants no access to another.
 - The decision is pending and the task is in the expected state. The request carries an expected resource version; stale state is rejected without changing the task.
 - The approval is bound to the pending decision and its evidence references. The event stores the authenticated internal user id, session id, workspace/resource ids, expected version, evidence references, timestamp, correlation/causation ids, and resulting version.
-- The state transition, approval event, and audit event commit atomically. Role membership comes from CodeXPT storage at authorization time, not Cognito or request data.
+- The state transition, approval event, and audit event commit atomically. Role membership comes from CodeXPT storage at authorization time, not OIDC provider claims or request data.
 
 ## Ownership, invitations, and membership lifecycle
 
 - The first workspace and initial `OWNER` are provisioned out of band by an operator using an explicit verified `(issuer, subject)` identity. There is no public registration or implicit “first login becomes owner” rule.
 - Only a current workspace `OWNER` may create an invitation, change another member's role, revoke membership, or initiate ownership transfer. Each action is scoped to one workspace and audited.
-- An invitation is single-use, stored as a token digest, expires after seven days, and is accepted only by an authenticated identity whose verified email matches the invitation. A Cognito login without verified email cannot accept an email-bound invite. Invitation acceptance adds membership in one transaction; it never creates an Owner automatically.
+- An invitation is single-use, stored as a token digest, expires after seven days, and is accepted only by an authenticated identity whose verified email matches the invitation. An identity without a verified email cannot accept an email-bound invite. Invitation acceptance adds membership in one transaction; it never creates an Owner automatically.
 - Multiple owners are allowed, but a workspace must never have zero active owners. Removing/downgrading/disabling the last Owner is rejected. The transaction that transfers ownership promotes an existing active member to `OWNER`, then demotes the transferring Owner to `EDITOR`; both role changes and one audit event commit atomically.
 - Deleting/disabling a human user with memberships requires explicit membership revocation first; the operation is denied if it would leave any workspace ownerless. Account deletion and recovery remain an operator-controlled procedure for the first beta.
 
 ## OIDC browser endpoints
 
-- `GET /api/auth/login`: generate cryptographically random one-use `state`, `nonce`, and PKCE verifier/challenge; store expiring transaction (10 minutes) server-side; redirect only to configured issuer and fixed callback.
+- `GET /api/auth/login`: generate cryptographically random one-use `state`, `nonce`, and PKCE verifier/challenge; store expiring transaction (10 minutes) server-side; request only `openid profile email`; redirect only to configured issuer and fixed callback. The issuer/client/callback are deployment configuration, not request parameters.
 - `GET /api/auth/callback`: require matching unexpired one-use state and browser cookie; exchange code server-side; validate signature via issuer JWKS, exact issuer, client audience, nonce, time claims, allowed algorithm, and code verifier; resolve account by `(issuer, sub)`. A first login may create an identity row only when its verified email has an active invitation; it does not grant workspace access until the invite is accepted.
 - On successful callback: rotate/create the session, log the event, set a host-only `__Host-codexpt_session` cookie with `Secure; HttpOnly; SameSite=Lax; Path=/`, and redirect to a fixed configured Vercel URL. Never accept an arbitrary `return_to` URL.
 - `GET /api/auth/me`: return only a minimal profile and a CSRF token. Never return OIDC ID, access, or refresh tokens.

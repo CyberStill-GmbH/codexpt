@@ -78,6 +78,19 @@ Verified on 2026-10-10 before sending screenshots to the product reviewer:
 
 The seven prior release gates and limits above still apply; this screen QA does not constitute deployment approval or hosted release certification.
 
+## ChatGPT-auth follow-up and architecture review
+
+Verified on 2026-10-10 after adding provider-specific OpenAI login presentation, correcting Terraform identity-provider configuration, and recording the agent-connection and hosting decisions:
+
+- `cargo fmt --check`, `cargo test --all-targets` (33 passed), and `cargo clippy --all-targets --all-features -- -D warnings` passed.
+- `npm --prefix web test -- --run` passed 5 tests; `npm --prefix web run lint` and `npm --prefix web run build` passed.
+- `npm --prefix web run test:e2e` passed all 11 Playwright cases, including configured OpenAI OIDC copy, long-title overflow at 320–1280 px, accessible member dialog, and correct logo/favicon variants. Axe reported no violations in the flows covered by the suite.
+- `scripts/smoke.ps1` passed using a disposable SQLite database: one synthetic review, one message and eight audit events.
+- `terraform fmt -check -recursive` and `terraform validate` passed. No Terraform plan/apply, deployment, DNS change, cloud resource change, live OIDC login or API/model usage was performed.
+- The first clippy run overlapped a Vite build that replaced tracked `web/dist` assets and caused RustEmbed to observe an incomplete directory. The serial rerun passed; the first E2E run also timed out during that overlap. The subsequent serial E2E run passed all 11 cases.
+
+This verifies the current local branch only. No Codex runner, pairing endpoint, durable agent inbox, remote MCP server, OpenAI website client, or Workers/D1 adapter has been implemented or tested. Those remain separately gated work. ChatGPT's approved design decisions are recorded in [ADR-0006](adr/0006-local-agent-runner-inbox.md) and [ADR-0007](adr/0007-workers-d1-hosting-spike.md).
+
 ## Test data and privacy
 
 Use synthetic tasks and evidence only. Tests must not call external model services or use real provider credentials. Temporary DB files must be removed by test fixtures. Do not store outputs from unrelated user conversations in test data.

@@ -33,10 +33,21 @@ test('login and invite screens: responsive empty identity states are accessible'
     await page.goto('/invite')
     await expect(page.getByRole('heading', { name: /Entra a un espacio de trabajo compartido/ })).toBeVisible()
     await expect(page.getByText('La conexión de identidad aún no está configurada.')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Volver al inicio seguro' })).toHaveAttribute('href', '/login')
     await expectAccessibleCapture(page, `invite-${suffix}.png`)
   }
 
   expect(pageErrors).toEqual([])
+})
+
+test('configured OpenAI OIDC shows ChatGPT sign-in and keeps CodeXPT roles explicit', async ({ page }) => {
+  await page.route('**/api/auth/status', (route) => route.fulfill({ json: { configured: true, provider: 'ChatGPT' } }))
+  await page.route('**/api/auth/me', (route) => route.fulfill({ status: 401, json: { error: 'unauthorized' } }))
+  await page.goto('/login')
+  const button = page.getByRole('link', { name: 'Continuar con ChatGPT' })
+  await expect(button).toBeVisible()
+  await expect(button).toHaveAttribute('href', /\/api\/auth\/login$/)
+  await expect(page.getByText('OpenAI verifica tu identidad; CodeXPT administra tus permisos y workspace.')).toBeVisible()
 })
 
 test('dashboard: empty workspace state is responsive and accessible', async ({ page }) => {
@@ -81,12 +92,35 @@ test('hosted owner: member management screen renders and creates a one-time invi
     return route.fulfill({ status: 404, json: { error: `No synthetic QA route for ${request.method()} ${url.pathname}` } })
   })
 
-  for (const [width, height, suffix] of [[390, 844, 'mobile'], [1280, 900, 'desktop']] as const) {
+  for (const [width, height, suffix] of [[390, 844, 'mobile'], [390, 600, 'mobile-short'], [1280, 900, 'desktop']] as const) {
     await page.setViewportSize({ width, height })
     await page.goto('/')
     await expect(page.getByRole('button', { name: 'Miembros' })).toBeVisible()
-    await page.getByRole('button', { name: 'Miembros' }).click()
+    const opener = page.getByRole('button', { name: 'Miembros' })
+    await opener.click()
     const dialog = page.getByRole('dialog', { name: 'Miembros' })
+    const headerClose = dialog.locator('.dialog-head').getByRole('button', { name: 'Cerrar' })
+    await expect(headerClose).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(dialog.locator('.dialog-actions').getByRole('button', { name: 'Cerrar' })).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(headerClose).toBeFocused()
+    if (height === 600) {
+      const bounds = await dialog.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return { top: rect.top, bottom: rect.bottom, height: rect.height, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }
+      })
+      expect(bounds.top).toBeGreaterThanOrEqual(0)
+      expect(bounds.bottom).toBeLessThanOrEqual(height)
+      expect(bounds.height).toBeLessThanOrEqual(height - 24)
+      expect(bounds.scrollHeight).toBeGreaterThanOrEqual(bounds.clientHeight)
+      expect(await dialog.getByLabel('Invitar por correo verificado').evaluate((input) => getComputedStyle(input).minHeight)).toBe('44px')
+    }
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await expect(opener).toBeFocused()
+    await opener.click()
+    await expect(dialog).toBeVisible()
     await expect(dialog.getByText('owner@example.test')).toBeVisible()
     await expect(dialog.getByText('editor@example.test')).toBeVisible()
     const evidence = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
@@ -203,10 +237,13 @@ test('tablet: keeps the chronology full-width and navigable at 768px', async ({ 
   const layout = await page.evaluate(() => {
     const activity = document.querySelector('.activity-panel')!.getBoundingClientRect()
     const rail = document.querySelector('.annotation-rail')!.getBoundingClientRect()
-    return { viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, activityWidth: activity.width, railTop: rail.top, activityBottom: activity.bottom }
+    const question = document.querySelector('.question-section')!.getBoundingClientRect()
+    return { viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, activityWidth: activity.width, railWidth: rail.width, questionWidth: question.width, railTop: rail.top, activityBottom: activity.bottom }
   })
   expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth)
   expect(layout.activityWidth).toBeGreaterThan(420)
+  expect(layout.questionWidth).toBeGreaterThan(420)
+  expect(layout.questionWidth).toBeGreaterThanOrEqual(layout.railWidth - 2)
   expect(layout.railTop).toBeGreaterThanOrEqual(layout.activityBottom)
   await page.screenshot({ path: test.info().outputPath('dashboard-tablet.png'), fullPage: true })
 })
@@ -218,4 +255,44 @@ test('desktop: accessible, readable dashboard capture', async ({ page }) => {
   const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(accessibility.violations).toEqual([])
   await page.screenshot({ path: test.info().outputPath('dashboard-desktop.png'), fullPage: true })
+})
+
+test('long review titles stay contained from 320px through desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const title = 'ArchitectureDecisionRecord'.repeat(4)
+  await createReview(page, title)
+
+  for (const width of [320, 390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 900 })
+    const dimensions = await page.evaluate(() => ({ viewport: window.innerWidth, document: document.documentElement.scrollWidth }))
+    expect(dimensions.document, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
+    await expect(page.getByRole('heading', { name: title })).toBeVisible()
+  }
+})
+
+test('brand and favicon render in their intended size variants', async ({ page }) => {
+  await page.goto('/login')
+  await page.evaluate(() => {
+    const preview = document.createElement('section')
+    preview.id = 'brand-size-preview'
+    preview.setAttribute('aria-label', 'Brand size preview')
+    preview.style.cssText = 'position:fixed;z-index:20;inset:auto 16px 16px auto;display:flex;gap:18px;align-items:center;padding:14px;background:#fff;border:1px solid #d4d2cb'
+    preview.innerHTML = [
+      ['favicon.svg', 16], ['codexpt.svg', 24], ['codexpt.svg', 32],
+    ].map(([source, size]) => `<figure style="display:grid;justify-items:center;gap:6px;margin:0;font:11px sans-serif;color:#171c24"><img src="/${source}" width="${size}" height="${size}" alt="${source} at ${size}px"><figcaption>${source} · ${size}px</figcaption></figure>`).join('')
+    document.body.replaceChildren(preview)
+    document.body.style.cssText = 'min-height:100vh;display:grid;place-items:center;background:#f7f6f2'
+  })
+  const preview = page.locator('#brand-size-preview')
+  await expect(preview.getByRole('img')).toHaveCount(3)
+  await expect(preview.getByRole('img', { name: 'favicon.svg at 16px' })).toBeVisible()
+  await expect(preview.getByRole('img', { name: 'codexpt.svg at 24px' })).toBeVisible()
+  await expect(preview.getByRole('img', { name: 'codexpt.svg at 32px' })).toBeVisible()
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/favicon.svg')
+  const imageLoads = await preview.getByRole('img').evaluateAll((images) => images.map((image) => {
+    const element = image as HTMLImageElement
+    return element.complete && element.naturalWidth > 0
+  }))
+  expect(imageLoads).toEqual([true, true, true])
+  await page.screenshot({ path: test.info().outputPath('brand-size-preview.png'), fullPage: false })
 })

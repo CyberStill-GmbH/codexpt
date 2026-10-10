@@ -22,6 +22,23 @@ variable "user_pool_domain_prefix" {
   default     = "codexpt-jappi"
 }
 
+variable "identity_provider" {
+  description = "Identity provider for CodeXPT. OpenAI requires an issued OpenAI OAuth client ID; it is not created by Terraform."
+  type        = string
+  default     = "cognito"
+
+  validation {
+    condition     = contains(["cognito", "openai"], var.identity_provider)
+    error_message = "identity_provider must be either cognito or openai."
+  }
+}
+
+variable "openai_client_id" {
+  description = "OpenAI-issued public OAuth client ID. Required only when identity_provider is openai; not a secret."
+  type        = string
+  default     = ""
+}
+
 variable "instance_type" {
   description = "Single-instance beta size; t4g.small provides 2 vCPU and 2 GiB RAM."
   type        = string

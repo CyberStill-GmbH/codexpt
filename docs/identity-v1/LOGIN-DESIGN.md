@@ -1,10 +1,10 @@
 # CodeXPT login design and implementation review
 
-The branded login and invitation acceptance pages are implemented. The page must never suggest that access has succeeded before the Rust API verifies the managed OIDC callback. A controlled local OIDC provider now exercises the callback, PKCE, signature, nonce, state and replay checks. Cognito and browser login across hosted domains remain untested; this is not yet a release-ready hosted login.
+The branded login and invitation acceptance pages are implemented. The page must never suggest that access has succeeded before the Rust API verifies the OIDC callback. A controlled local OIDC provider exercises callback, PKCE, signature, nonce, state and replay checks. The configured issuer determines the provider label; the current code supports the OpenAI issuer as well as Cognito. Neither live provider login nor the hosted browser flow has been verified, so this is not release-ready.
 
 ## Brief
 
-Give invited CodeXPT users a quiet, legible entrance into a serious review and audit workspace. The entry page explains what the user is signing into and has one obvious action. Cognito owns credential collection in the invite-only beta; the CodeXPT page must not ask for or store provider passwords.
+Give invited CodeXPT users a quiet, legible entrance into a serious review and audit workspace. The entry page explains what the user is signing into and has one obvious action. The selected OpenID Connect provider owns credential collection; the CodeXPT page must not ask for or store provider passwords.
 
 ## Reference observations
 
@@ -43,12 +43,13 @@ At desktop, use two asymmetric columns: a concise product explanation on the lef
 
 ## Interaction and accessibility
 
-- One clear button: **“Continuar”**. It navigates to the configured Cognito managed-login endpoint; it does not authenticate locally.
+- One clear button names the configured provider (for example, **“Continuar con ChatGPT”**). It redirects to the configured issuer; the API verifies the callback and creates a separate CodeXPT session.
 - A short, plain-language note explains that credentials are entered on the secure sign-in page and access is by invitation.
 - Provide visible keyboard focus, full keyboard operation, reduced-motion support, responsive reflow, and error text that says what happened and the next safe action.
 - Do not put tokens, authorization codes, email addresses, or workspace secrets in local storage, URL fragments, or rendered error details.
-- The branded CodeXPT surface may use the current palette and mark. The separate managed provider page receives the same logo/colors and Spanish localization through supported branding settings.
+- The branded CodeXPT surface may use the current palette and mark. Provider-specific branding is configured only through that provider's supported controls.
+- ChatGPT sign-in proves an OpenAI identity only. It does not link existing ChatGPT web conversations, grant workspace roles, or connect a Codex process. Those capabilities have separate consent/integration flows; see [ADR-0005](../adr/0005-openai-chatgpt-auth-and-agent-connections.md).
 
 ## Acceptance gate and current gaps
 
-The real OIDC redirect and backend session flow are implemented. Cognito uses a public app client with Authorization Code + PKCE, avoiding a client secret in Terraform state or the browser. The controlled-provider callback test, production frontend build and unit tests pass. The Cognito callback, credentialed CORS/CSRF browser flow, hosted login accessibility pass and real-domain visual review remain outstanding. Ask for the delegated visual review after a safe review deployment is available.
+The OIDC redirect and backend session flow use Authorization Code + PKCE, with identity-only scopes `openid profile email` and a public client. No OpenAI client secret is needed or accepted. Terraform can select Cognito or an OpenAI-issued client ID. OpenAI website-client access is not enabled until OpenAI issues/authorizes the client and registers the exact API callback. The controlled-provider callback test does not prove compatibility with live OpenAI or Cognito. Credentialed CORS/CSRF browser flow, hosted accessibility and live-domain review remain outstanding.

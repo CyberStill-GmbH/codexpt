@@ -1,20 +1,20 @@
 # Identity v1 threat model (implementation review)
 
-**Status:** design controls are partially implemented and locally tested; this is not a security certification or release approval. **Scope:** OIDC login, browser session, workspace membership/RBAC, review data, and human approvals across a Vercel UI and Rust API. Local mode remains a separate OS-user trust boundary. Task storage remains rusqlite; a controlled local provider callback test now exists, but Cognito and the hosted browser flow are untested. The authorization acceptance plan lists outstanding gates. Do not expose this branch to public traffic yet.
+**Status:** design controls are partially implemented and locally tested; this is not a security certification or release approval. **Scope:** OIDC login, browser session, workspace membership/RBAC, review data, and human approvals across a Vercel UI and Rust API. Local mode remains a separate OS-user trust boundary. Task storage remains rusqlite; a controlled local provider callback test now exists, but neither Cognito nor OpenAI has been tested live and the hosted browser flow is untested. The authorization acceptance plan lists outstanding gates. Do not expose this branch to public traffic yet.
 
 ## Assets
 
 - Provider account identity `(issuer, subject)`, internal user id, sessions, and CSRF tokens.
 - Workspace membership and roles; task/message/decision/evidence/event records.
 - Human approval integrity and identity/audit provenance.
-- Configured OIDC issuer/client/callback origins. The Cognito public client uses Authorization Code + PKCE and does not require an app-client secret.
+- Configured OIDC issuer/client/callback origins. Cognito and OpenAI use public Authorization Code + PKCE clients; no client secret is sent by this backend.
 
 ## Trust boundaries and actors
 
 - Browser and all client-supplied headers/body/query values are untrusted.
 - Vercel static frontend is public and cannot hold provider secrets or enforce authorization.
 - Rust API plus its SQLx database are the authorization authority.
-- Cognito is the credential/OIDC authority; a valid authentication does not imply CodeXPT workspace access.
+- The selected OIDC provider is the credential/identity authority; a valid authentication does not imply CodeXPT workspace access.
 - Human user with `OWNER`, `EDITOR`, or `VIEWER` membership; an unprovisioned authenticated identity; a malicious authenticated user; cross-site attacker; network attacker; compromised browser/XSS; database/log reader; operator with AWS access.
 - Agent runtime identity and provider connection are separate future actor/resource categories. OIDC human login must not imply agent identity, external-provider grant, or execution rights.
 - Legacy event actor labels such as `human:cesar` are declared claims, not verified identity evidence.
@@ -32,9 +32,9 @@
 | CSRF / cross-origin API | Malicious site triggers credentialed mutation | Exact Origin/Host checks, credentialed CORS only for production UI, per-session CSRF token header, SameSite=Lax defense in depth, JSON-only mutation; test hostile/null/preview origins. |
 | IDOR / tenant escape | Substitute another workspace/task/decision id | Resolve membership and resource in the same scoped query/service; workspace id included in every child access and mutation; test user A cannot read/change any B resource. |
 | Vertical privilege escalation | Editor changes role or submits approval | Server-side action-role matrix; role changes only by Owner; final approval Owner only; membership changes and approval transact with audit event; test each denied transition. |
-| Role-claim confusion | A valid Cognito token contains a role/group claim that is stale or attacker-controlled | Cognito proves identity only; CodeXPT SQLx membership is the authority for workspace roles; test provider claims cannot grant or change roles. |
+| Role-claim confusion | A valid provider token contains a role/group claim that is stale or attacker-controlled | The provider proves identity only; CodeXPT SQLx membership is the authority for workspace roles; test provider claims cannot grant or change roles. |
 | Approval provenance gap | API checks only `OWNER` and records approval without binding the exact pending decision/version/evidence | Require verified human session + same-workspace Owner + pending decision + expected resource version + decision evidence; atomically persist transition, resulting version, and provenance. |
-| Unprovisioned account / public sign-up | Arbitrary person authenticates and gets a workspace | Disable Cognito self sign-up in first beta; provision users out of band; create membership only through Owner invite flow; test unknown/disabled users cannot reach API. |
+| Unprovisioned account / public sign-up | Arbitrary person authenticates and gets a workspace | Require an active, verified-email invitation for first-time identity; provision the initial Owner out of band; test unknown/disabled users cannot reach API. |
 | Ownership loss | Removing, disabling, or downgrading the final Owner leaves a workspace unmanaged | Require an active owner count check under the same transaction; ownership transfer promotes an existing member before demoting the old owner; race test concurrent changes. |
 | Invitation theft/replay | Reused or stolen invitation grants membership to another identity | Store only a high-entropy token digest; expire and consume once; bind acceptance to a verified invitee email; do not grant Owner on acceptance. |
 | User account linking collision | Same email at different issuer or changed email claims merges identities | Key external identity on `(iss, sub)`; never auto-link by email; explicit audited account-link flow only in later phase. |
@@ -53,13 +53,14 @@
 3. Every workspace-owned resource read or write is checked against current workspace membership and action role.
 4. An approval event identifies a verified owner user and causally links the resolved task/decision; an Agent or Editor cannot issue one.
 5. Logout/revocation and role removal take effect at the next request; session expiry is enforced server-side.
-6. OAuth provider secrets (if a future confidential provider is added), codes, access/refresh/id tokens, PKCE verifier, cookie value, and CSRF secret never appear in response bodies or logs. The Cognito public app-client id is configuration, not a secret.
+6. OAuth codes, access/refresh/ID tokens, PKCE verifier, cookie value, and CSRF secret never appear in response bodies or logs. Public client IDs are configuration, not secrets. Initial hosted login retains no provider tokens after ID-token verification.
 7. Local mode stays available offline and cannot be exposed as a public or multi-user deployment.
 8. A human, an agent runtime, a provider connection, and a legacy declared actor cannot be silently substituted for one another.
 
 ## Residual risks / review gates
 
-- Cognito account configuration and feature tier can drift; IaC and post-deploy configuration checks are needed before beta.
+- Provider configuration/eligibility can drift; IaC and post-deploy configuration checks are needed before beta. OpenAI website OAuth stays disabled until the client is authorized and the callback is registered.
+- ChatGPT plan-use OAuth tokens are a distinct higher-value secret. They must remain in an OS credential vault in the future local connector; they must not be copied into hosted CodeXPT session tables, logs, or frontend storage.
 - SQLx SQLite/PostgreSQL query/migration parity needs its own tests; `workspace_id` omission is a recurring IDOR risk.
 - A compromised Vercel origin or XSS can perform actions as a logged-in user despite HttpOnly cookies; apply CSP/output encoding, narrow CORS, CSRF, and approval confirmation.
 - Email recovery, invitation delivery, support/admin override, owner loss, and deletion/retention policy remain unresolved; no public registration until specified.

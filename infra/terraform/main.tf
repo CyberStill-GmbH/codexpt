@@ -23,6 +23,7 @@ data "aws_ami" "al2023_arm64" {
 }
 
 resource "aws_cognito_user_pool" "codexpt" {
+  count                    = var.identity_provider == "cognito" ? 1 : 0
   name                     = "codexpt-private-beta"
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
@@ -50,14 +51,15 @@ resource "aws_cognito_user_pool" "codexpt" {
 }
 
 resource "aws_cognito_user_pool_client" "codexpt" {
+  count                                = var.identity_provider == "cognito" ? 1 : 0
   name                                 = "codexpt-web-bff"
-  user_pool_id                         = aws_cognito_user_pool.codexpt.id
+  user_pool_id                         = aws_cognito_user_pool.codexpt[0].id
   generate_secret                      = false
   prevent_user_existence_errors        = "ENABLED"
   enable_token_revocation              = true
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
-  allowed_oauth_scopes                 = ["openid", "email"]
+  allowed_oauth_scopes                 = ["openid", "profile", "email"]
   supported_identity_providers         = ["COGNITO"]
   callback_urls                        = ["https://${var.api_domain}/api/auth/callback"]
   logout_urls                          = [var.web_origin]
@@ -72,8 +74,14 @@ resource "aws_cognito_user_pool_client" "codexpt" {
 }
 
 resource "aws_cognito_user_pool_domain" "codexpt" {
+  count        = var.identity_provider == "cognito" ? 1 : 0
   domain       = "${var.user_pool_domain_prefix}-${data.aws_caller_identity.current.account_id}"
-  user_pool_id = aws_cognito_user_pool.codexpt.id
+  user_pool_id = aws_cognito_user_pool.codexpt[0].id
+}
+
+locals {
+  oidc_issuer    = var.identity_provider == "openai" ? "https://auth.openai.com" : "https://${aws_cognito_user_pool.codexpt[0].endpoint}"
+  oidc_client_id = var.identity_provider == "openai" ? var.openai_client_id : aws_cognito_user_pool_client.codexpt[0].id
 }
 
 resource "aws_s3_bucket" "backup" {
@@ -228,7 +236,7 @@ resource "aws_security_group" "api" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   egress {
-    description = "HTTPS to SSM, Cognito, S3, registries, packages and ACME"
+    description = "HTTPS to SSM, identity provider, S3, registries, packages and ACME"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -263,14 +271,25 @@ resource "aws_instance" "api" {
     app_release_url   = var.app_release_url
     app_release_hash  = lower(var.app_release_sha256)
     caddy_image       = var.caddy_image
-    oidc_issuer       = "https://${aws_cognito_user_pool.codexpt.endpoint}"
-    oidc_client_id    = aws_cognito_user_pool_client.codexpt.id
+    oidc_issuer       = local.oidc_issuer
+    oidc_client_id    = local.oidc_client_id
     oidc_redirect_uri = "https://${var.api_domain}/api/auth/callback"
     login_success_url = "${var.web_origin}/"
     web_origin        = var.web_origin
     backup_bucket     = aws_s3_bucket.backup.bucket
     aws_region        = var.aws_region
   })
+
+  lifecycle {
+    precondition {
+      condition     = var.identity_provider != "openai" || length(trimspace(var.openai_client_id)) > 0
+      error_message = "OpenAI website sign-in cannot be planned without an OpenAI-issued public OAuth client ID."
+    }
+    precondition {
+      condition     = data.aws_ami.al2023_arm64.architecture == "arm64"
+      error_message = "CodeXPT beta requires an ARM64 Amazon Linux 2023 AMI."
+    }
+  }
 
   metadata_options {
     http_endpoint = "enabled"
@@ -284,13 +303,6 @@ resource "aws_instance" "api" {
     volume_type           = "gp3"
     volume_size           = var.root_volume_gib
     delete_on_termination = true
-  }
-
-  lifecycle {
-    precondition {
-      condition     = data.aws_ami.al2023_arm64.architecture == "arm64"
-      error_message = "CodeXPT beta requires an ARM64 Amazon Linux 2023 AMI."
-    }
   }
 
   depends_on = [

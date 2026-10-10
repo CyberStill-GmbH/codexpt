@@ -29,6 +29,23 @@ pub struct OidcConfig {
 }
 
 impl OidcConfig {
+    /// Safe, presentation-only name derived from the configured, exact issuer.
+    /// Never use a client-controlled value to select an identity provider.
+    pub fn provider_label(&self) -> &'static str {
+        match self.issuer.as_str() {
+            "https://auth.openai.com" => "ChatGPT",
+            issuer
+                if issuer.starts_with("https://cognito-idp.")
+                    && issuer.contains(".amazonaws.com/") =>
+            {
+                "Amazon Cognito"
+            }
+            _ => "proveedor de identidad",
+        }
+    }
+}
+
+impl OidcConfig {
     pub fn from_env() -> Option<Self> {
         let config = Self {
             issuer: std::env::var("CODEXPT_OIDC_ISSUER").ok()?,
@@ -80,7 +97,11 @@ pub struct CallbackQuery {
 pub async fn status(State(state): State<OidcState>) -> Json<AuthStatus> {
     Json(AuthStatus {
         configured: state.config.is_some(),
-        provider: "OpenID Connect",
+        provider: state
+            .config
+            .as_ref()
+            .map(OidcConfig::provider_label)
+            .unwrap_or("proveedor de identidad"),
     })
 }
 
@@ -236,6 +257,7 @@ async fn begin_login(
             Nonce::new_random,
         )
         .add_scope(Scope::new("openid".into()))
+        .add_scope(Scope::new("profile".into()))
         .add_scope(Scope::new("email".into()))
         .set_pkce_challenge(challenge)
         .url();
@@ -348,8 +370,10 @@ pub(crate) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(|(_, value)| value.to_owned())
 }
 
-fn tracing_error(context: &str, error: &impl std::fmt::Display) {
-    eprintln!("{context}: {error}");
+fn tracing_error(context: &str, _error: &impl std::fmt::Display) {
+    // Provider/client errors can echo OAuth response content. Keep diagnostic
+    // logs free of codes, tokens, claims, and remote response bodies.
+    eprintln!("{context}: operation failed");
 }
 
 #[cfg(test)]
@@ -384,6 +408,29 @@ mod tests {
     const SUBJECT: &str = "test-owner-subject";
     const EMAIL: &str = "owner@example.test";
 
+    #[test]
+    fn provider_label_is_derived_from_the_configured_issuer() {
+        let config = |issuer: &str| OidcConfig {
+            issuer: issuer.into(),
+            client_id: CLIENT_ID.into(),
+            redirect_uri: "https://api.example.test/api/auth/callback".into(),
+            success_url: "https://app.example.test/login".into(),
+        };
+        assert_eq!(
+            config("https://auth.openai.com").provider_label(),
+            "ChatGPT"
+        );
+        assert_eq!(
+            config("https://cognito-idp.us-east-1.amazonaws.com/us-east-1_example")
+                .provider_label(),
+            "Amazon Cognito"
+        );
+        assert_eq!(
+            config("https://id.example.test").provider_label(),
+            "proveedor de identidad"
+        );
+    }
+
     #[derive(Clone)]
     struct ProviderState {
         issuer: String,
@@ -407,6 +454,7 @@ mod tests {
         nonce: String,
         code_challenge: String,
         code_challenge_method: String,
+        scope: String,
     }
 
     async fn discovery(AxumState(state): AxumState<ProviderState>) -> Json<serde_json::Value> {
@@ -437,6 +485,14 @@ mod tests {
         assert!(query.redirect_uri.ends_with("/api/auth/callback"));
         assert!(!query.state.is_empty());
         assert_eq!(query.code_challenge_method, "S256");
+        let requested_scopes = query
+            .scope
+            .split_whitespace()
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            requested_scopes,
+            ["openid", "profile", "email"].into_iter().collect()
+        );
         *state.auth.lock().unwrap() = Some(AuthorizationRequest {
             nonce: query.nonce,
             code_challenge: query.code_challenge,

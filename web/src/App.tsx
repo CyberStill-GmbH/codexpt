@@ -88,12 +88,14 @@ function BrandMark() {
 
 function Login() {
   const [configured, setConfigured] = useState<boolean | null>(null)
+  const [provider, setProvider] = useState('proveedor de identidad')
   const [signedIn, setSignedIn] = useState(false)
   useEffect(() => {
     let active = true
-    api<{ configured: boolean }>('/api/auth/status')
-      .then(async ({ configured: ready }) => {
+    api<{ configured: boolean; provider?: string }>('/api/auth/status')
+      .then(async ({ configured: ready, provider: providerName }) => {
         if (!active) return
+        if (providerName) setProvider(providerName)
         setConfigured(ready)
         if (ready) {
           try { await api('/api/auth/me'); if (active) setSignedIn(true) }
@@ -113,9 +115,9 @@ function Login() {
       <p className="login-copy">Un espacio claro para propuestas, revisión entre agentes y decisiones humanas con evidencia.</p>
       <div className="login-auth">
         {signedIn ? <a className="primary-button login-button" href="/">Ir al workspace <ArrowUpRight size={16} /></a> : <a className={`primary-button login-button ${configured === false ? 'disabled' : ''}`} href={configured ? `${API_BASE}/api/auth/login` : undefined} aria-disabled={!configured}>
-          <LockKeyhole size={15} /> Continuar con inicio seguro <ArrowUpRight size={15} />
+          <LockKeyhole size={15} /> Continuar con {provider === 'ChatGPT' ? 'ChatGPT' : 'inicio seguro'} <ArrowUpRight size={15} />
         </a>}
-        <p className="login-provider">{configured === null ? 'Comprobando conexión de identidad…' : configured ? 'Inicio de sesión administrado · OpenID Connect' : 'La conexión de identidad se habilitará al completar la configuración del entorno.'}</p>
+        <p className="login-provider">{configured === null ? 'Comprobando conexión de identidad…' : configured ? provider === 'ChatGPT' ? 'OpenAI verifica tu identidad; CodeXPT administra tus permisos y workspace.' : `Identidad verificada por ${provider} · permisos administrados por CodeXPT.` : 'La conexión de identidad se habilitará al completar la configuración del entorno.'}</p>
         <a className="login-invite-link" href="/invite">¿Tienes una invitación? Aceptarla</a>
       </div>
       <div className="login-foot"><ShieldCheck size={15} /><span>Acceso privado, decisiones trazables y roles por workspace.</span></div>
@@ -175,7 +177,7 @@ function InviteAcceptance() {
       <div className="login-rule" />
       <p className="login-eyebrow"><span className="login-dot" /> ACCESO POR INVITACIÓN</p>
       <h1 id="invite-title">Entra a un espacio<br />de trabajo compartido.</h1>
-      {!configured ? <p className="login-copy">{configured === null ? 'Comprobando conexión de identidad…' : 'La conexión de identidad aún no está configurada.'}</p> : !signedIn ? <div className="login-auth"><p className="login-copy">Primero verifica tu identidad; luego podrás aceptar el código enviado por quien administra el workspace.</p><a className="primary-button login-button" href="/login">Continuar al inicio seguro <ArrowUpRight size={15} /></a></div> : <form className="invite-form" onSubmit={accept}>
+      {!configured ? <><p className="login-copy">{configured === null ? 'Comprobando conexión de identidad…' : 'La conexión de identidad aún no está configurada.'}</p><a className="login-invite-link invite-return-link" href="/login">Volver al inicio seguro</a></> : !signedIn ? <div className="login-auth"><p className="login-copy">Primero verifica tu identidad; luego podrás aceptar el código enviado por quien administra el workspace.</p><a className="primary-button login-button" href="/login">Continuar al inicio seguro <ArrowUpRight size={15} /></a></div> : <form className="invite-form" onSubmit={accept}>
         <p className="login-copy">Confirma que iniciaste sesión con el correo al que se envió la invitación y pega el código recibido.</p>
         <label htmlFor="invite-token">Código de invitación</label>
         <input id="invite-token" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" spellCheck={false} maxLength={128} required />
