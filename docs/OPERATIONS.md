@@ -36,7 +36,9 @@ CLI commands open `.codexpt/state.sqlite3`, perform schema migrations, execute o
 - A hosted schedule must upload these generated files to a private, versioned S3 bucket and alert on command/upload failure. EBS snapshots alone are not the documented SQLite recovery path.
 - Local MVP backups are operator-triggered; cloud automation and a recovery-point objective are not supplied until the Terraform beta is reviewed and applied.
 
-### Hosted restore procedure (after the beta is approved)
+### Legacy AWS/EC2 restore procedure (not the active beta topology)
+
+The following SSM/S3 procedure is only for the documented AWS/EC2 alternative. The active candidate is Railway + one SQLite volume; do not use this AWS runbook for it. A Railway restore rehearsal and platform-specific runbook are still required before the hosted beta.
 
 1. Open an SSM Session Manager shell and stop `codexpt.service` and `codexpt-backup.timer`.
 2. Download the selected S3 backup to `/var/lib/codexpt/recovery/backup.sqlite3` using the instance role. Record its S3 key and verify the expected restore point.

@@ -3,21 +3,21 @@
 ## Current release-candidate status — 2026-10-10
 
 **Source:** `main` release-candidate snapshot; this report records local verification, not a hosted deployment.
-**Status:** local Rust and HTTP authorization/CSRF gates pass; hosted private-beta validation is still blocked on real Cognito OIDC, the exact hosted browser origin, Railway volume/restore proof, hosted E2E, and an inspected Railway account/cost baseline.
+**Status:** local Rust and HTTP authorization/CSRF gates pass; hosted private-beta validation is still blocked on real Cognito OIDC, the exact hosted browser origin, Railway volume/restore proof, hosted E2E, tested invite/recovery operations, and an inspected Railway account/cost baseline. Public launch also requires abuse controls, audit/retention review, and tested monitoring/incident response.
 
 An isolated Cognito-only Terraform root now exists at `infra/terraform-cognito-test`. It registers only the local `127.0.0.1:4173` callback and creates a dedicated pool, public app client, and managed-login domain; it has not been planned or applied because the CLI has no authorized CodeXPT AWS identity. Live Cognito OIDC remains unverified.
 
 | Area | Current result |
 |---|---|
-| Rust | 52 tests passed, including authorization/CSRF matrix and loopback-mode guard cases; `cargo fmt --check` and Clippy with warnings denied passed |
+| Rust | 53 tests passed, including authorization/CSRF matrix, loopback-mode guards, and task-event query-plan index coverage; `cargo fmt`, Clippy with warnings denied, and `cargo test --locked --all-targets` passed |
 | Frontend | 6 Vitest tests; lint/build passed |
 | Browser E2E | 12 Playwright cases passed; includes responsive layout and Owner role/revocation flow with synthetic fixtures |
 | Accessibility | Axe reported no violations in the audited E2E routes; this is not certification |
 | Impeccable UI detector | No findings on the changed dashboard targets |
-| Container | The baseline image/smoke at commit `01ec692` passed. Rebuilding after the loopback-entrypoint change is **unverified**: Docker could not resolve `index.crates.io` from its build container, so the image did not finish building and the updated release-entrypoint check did not run. |
-| Cloud | No Railway service/domain, AWS resources, DNS, or certificate changed |
+| Container | Current worktree image built successfully as `codexpt:launch-review` (`sha256:1f7794449e7980a7e4bfda692fc29c6fdb4b85bdb0d0edd4948d0a118bebdf03`, 40,966,934 bytes). Synthetic hosted configuration returned HTTP 200 from readiness in a temporary `/data` mount; container removed after test. |
+| Cloud | No CodeXPT Railway project/service, AWS resources, DNS, or certificate changed |
 
-The prior `scripts/container-smoke.ps1` result used a synthetic OIDC issuer and identity; it does not establish live provider authentication. The current rerun stopped during `cargo build` in Docker because the builder could not resolve `index.crates.io`; no result is claimed for the new release-entrypoint rejection. The local SQLite-backed Axum router now has role, anonymous, cross-workspace, invitation lifecycle, session revocation/logout, and CSRF/Host/Origin negative/positive tests. These tests do not establish real Cognito compatibility or hosted browser behavior. The browser member-management flow uses synthetic API fixtures and does not establish production UI integration. Railway CLI reports that no project is linked in this workspace. The reported Hobby plan and any monthly cost remain unverified against the account. Invitation email delivery and hosted E2E are unverified.
+The container smoke uses a synthetic OIDC issuer and a temporary `/data` mount; it does not establish live provider authentication or persistent-volume recovery. The local SQLite-backed Axum router has role, anonymous, cross-workspace, invitation lifecycle, session revocation/logout, and CSRF/Host/Origin tests. These tests do not establish real Cognito compatibility or hosted browser behavior. The browser member-management flow uses synthetic API fixtures and does not establish production UI integration. Railway CLI is authenticated, but reports no CodeXPT project in the account project list; the dashboard browser is not authenticated. The reported Hobby plan is $5/month with $5 included usage, but account consumption and any incremental cost remain unverified. Invitation delivery and hosted E2E are unverified. The current Railway restore runbook, abuse limits, complete audit retention, monitoring alerts and public incident-response process are also open.
 
 Historical reports below retain results from earlier snapshots; their test counts and branch names do not describe this candidate.
 

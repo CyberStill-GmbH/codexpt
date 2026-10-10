@@ -1,6 +1,6 @@
 # ADR-0005: OpenAI identity and explicit agent connections
 
-- **Status:** Accepted design; identity implementation is partial and provider onboarding is pending. Agent transports are specified separately in [ADR-0006](0006-local-agent-runner-inbox.md) and the hosting spike in [ADR-0007](0007-workers-d1-hosting-spike.md).
+- **Status:** Accepted design for future OpenAI/agent connections; OpenAI website client access is pending. Its initial split-host browser notes are superseded by [ADR-0011](0011-same-origin-railway-beta.md). Agent transports are specified separately in [ADR-0006](0006-local-agent-runner-inbox.md) and the hosting spike in [ADR-0007](0007-workers-d1-hosting-spike.md).
 - **Date:** 2026-10-10
 - **Decision owners:** César (product director); implementation review delegated to ChatGPT
 - **Supersedes:** the Cognito-only provider choice in ADR-0004; it does not supersede ADR-0004's session, workspace authorization, invitation, or audit controls
@@ -59,7 +59,7 @@ The local connector's OAuth token store is explicitly out of scope for Terraform
 
 - OpenAI website OAuth client access is granted and has the production API callback registered; otherwise this remains a documented, disabled option.
 - Local controlled-provider tests validate PKCE, nonce, issuer, audience, signature, state replay rejection, and verified-email invite matching.
-- Production-browser tests prove secure cookies, exact CORS/Origin and CSRF behavior across the Vercel and API origins.
+- Hosted-browser tests prove secure cookies, exact Host/Origin and CSRF behavior on the same origin. No credentialed cross-origin CORS is required by the active topology.
 - Unknown accounts, unverified emails, revoked invitations, reused invitations, and disabled identities cannot obtain workspace access.
 - Role changes/removal and session revocation take effect on the next request; cross-workspace IDOR tests pass.
 - No OAuth code, access/refresh/ID token, cookie, or verifier is logged or exposed to browser storage/API responses.

@@ -35,6 +35,17 @@ The order matters: hosted-proxy/browser and volume checks require an isolated Ra
 8. Inventory the authoritative DNS zone for `jappi.net.pe` and attach only `codexpt.jappi.net.pe` to the Railway service. The API remains under `/api/*` on the same hostname; do not create `api.codexpt.jappi.net.pe` for this architecture. Verify DNS and Railway-managed HTTPS certificate before changing Cognito to the final exact callback.
 9. Run hosted browser E2E again on `https://codexpt.jappi.net.pe`, inspect logs, record backup/restore and rollback evidence, then get explicit product approval before sending invitations. No public registration is enabled by this plan.
 
+### Gate D — public launch (not approved)
+
+An invite-only private beta is not a public launch. Before opening the service to arbitrary users, require all hosted gates above plus:
+
+10. Add and test abuse controls for OIDC start/callback, invitation and API routes (rate limits, bounded retries/payloads, and a trusted client-IP strategy behind Railway's proxy). The current code enforces a 32 KiB JSON limit and authorization, but has no demonstrated per-IP/account rate-limit behavior. Do not trust arbitrary forwarded-IP headers.
+11. Complete an audit coverage/retention review for allowed and denied actions, document the fact that SQLite audit rows are application records rather than tamper-proof evidence, and exercise alerts for unavailable storage, unhealthy service, failed backup, and unexpected restarts.
+12. Validate operator-managed account provisioning, verified email, invite delivery/one-time token handling, lost-TOTP recovery, owner recovery, data retention/deletion, privacy/support contact and incident response. No self-service sign-up or email delivery provider is currently part of the implementation.
+13. Measure real resource usage, backup age/restore time and end-to-end latency under a representative workload; confirm the product's public claims match shipped functionality. In particular, agent messages are still entered manually; CodeXPT does not yet automatically connect Codex and ChatGPT.
+
+Until Gate D passes, describe the product only as an invite-only review workspace beta, not a public autonomous multi-agent service.
+
 ## Cost estimate
 
 Reference is 730 hours/month, us-east-1, Linux on-demand, no free-tier or account credits assumed:

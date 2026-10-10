@@ -15,7 +15,7 @@
 - The browser and all client-supplied headers/body/query values are untrusted; frontend code cannot hold provider secrets or enforce authorization.
 - Rust API plus its SQLx database are the authorization authority.
 - The selected OIDC provider is the credential/identity authority; a valid authentication does not imply CodeXPT workspace access.
-- Human user with `OWNER`, `EDITOR`, or `VIEWER` membership; an unprovisioned authenticated identity; a malicious authenticated user; cross-site attacker; network attacker; compromised browser/XSS; database/log reader; operator with AWS access.
+- Human user with `OWNER`, `EDITOR`, or `VIEWER` membership; an unprovisioned authenticated identity; a malicious authenticated user; cross-site attacker; network attacker; compromised browser/XSS; database/log reader; operator with Railway or AWS test-role access.
 - Agent runtime identity and provider connection are separate future actor/resource categories. OIDC human login must not imply agent identity, external-provider grant, or execution rights.
 - Legacy event actor labels such as `human:cesar` are declared claims, not verified identity evidence.
 
@@ -64,4 +64,4 @@
 - SQLx SQLite/PostgreSQL query/migration parity needs its own tests; `workspace_id` omission is a recurring IDOR risk.
 - A compromised same-origin UI or XSS can perform actions as a logged-in user despite HttpOnly cookies; apply CSP/output encoding, CSRF, and approval confirmation. Same-origin removes credentialed cross-origin CORS but does not remove CSRF risk.
 - Email recovery, invitation delivery, support/admin override, owner loss, and deletion/retention policy remain unresolved; no public registration until specified.
-- The AWS/Vercel topology and total bill require a separate cloud-readiness ADR, threat review, budget estimate, and concrete Terraform plan before infrastructure changes.
+- Railway same-origin is the active hosted candidate in [ADR-0011](../adr/0011-same-origin-railway-beta.md); it remains unprovisioned. Reassess the threat model and cost before changing topology or exposing public registration.

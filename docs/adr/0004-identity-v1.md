@@ -1,6 +1,6 @@
 # ADR-0004: Identity and workspace authorization boundary
 
-- **Status:** Identity boundary accepted for an invite-only hosted beta prototype; implementation partially present, not release-ready. The original split-host deployment sketch is superseded by [ADR-0011](0011-same-origin-railway-beta.md).
+- **Status:** Identity boundary accepted for an invite-only hosted beta prototype; implementation partially present, not release-ready. The original provider-tier selection is superseded by [ADR-0008](0008-cognito-private-beta-identity.md), and the split-host deployment sketch is superseded by [ADR-0011](0011-same-origin-railway-beta.md).
 - **Date:** 2026-10-10
 - **Decision owners:** César (product director); Codex, with delegated ChatGPT review
 
@@ -15,7 +15,7 @@ Authentication must not be spread across React components, HTTP handlers, and th
 1. Preserve the current local mode and its SQLite database. Its trust boundary remains the local OS account; it must say that its principal is local and not externally authenticated.
 2. Put identity types and authorization policy behind a provider-independent application boundary. HTTP middleware verifies a session and constructs a trusted `Principal`; application services authorize actions against a workspace before calling domain/storage operations. React only displays server-derived permissions.
 3. Use Rust + SQLx for the identity and workspace persistence port. Keep SQLite for local mode. For a horizontally scaled hosted service, implement a SQLx PostgreSQL adapter and database-specific migrations; do not put cloud session state in process memory or a Lambda-local SQLite file.
-4. Use a managed OIDC provider instead of implementing password storage or OAuth cryptography. **Amazon Cognito Essentials is approved as the first provider candidate for the invite-only beta.** Cognito is already in the intended cloud, exposes an OIDC authorization server and managed sign-in, and its current published direct-user free tier is 10,000 MAU per account/organization for Lite or Essentials. Essentials includes the managed-login branding editor. SMS, email delivery, traffic, database, API, and other hosting costs are separate; the free MAU tier is not an all-in hosting estimate. Cognito proves identity only; CodeXPT SQLx membership data controls workspace roles.
+4. Use a managed OIDC provider instead of implementing password storage or OAuth cryptography. **This original ADR considered Cognito Essentials; ADR-0008 supersedes that tier choice and selects Cognito Lite with the classic Hosted UI for the invite-only beta candidate.** Cognito proves identity only; CodeXPT SQLx membership data controls workspace roles. Provider pricing and enabled features must be rechecked against current official documentation before provisioning.
 5. Keep Cognito login/password pages provider-managed. Build a branded CodeXPT login page with a clear “Continuar” action that redirects to Cognito; customize the managed page with CodeXPT logo/colors and Spanish localization. Never collect the provider password in CodeXPT React. Disable self-service sign-up for the first beta and provision the initial owner/invited users out of band.
 6. The Rust API owns the OIDC callback and session. Use Authorization Code + PKCE, exact issuer/client/audience/callback validation, one-time `state`, `nonce`, fixed redirect targets, and a maintained OIDC library. For Cognito, use a public app client without a client secret; PKCE protects the authorization-code exchange. Do not return ID/access/refresh tokens to browser JavaScript.
 7. Create a random opaque server-side session after successful callback, rotate it at login and privilege change, and persist only a hash of its value in shared SQLx storage with creation, idle/absolute expiry, revocation, and user reference. Return the raw value only as a host-only `__Host-codexpt_session` cookie on the API host, with `Secure`, `HttpOnly`, `Path=/`, and `SameSite=Lax`; omit `Domain`. The API returns the CSRF token separately and requires it plus the exact browser `Origin` for state-changing requests. Session validation and revocation must work across backend instances. Do not select Lambda/multi-instance runtime until shared persistence and connection lifecycle are costed and tested.
@@ -25,7 +25,9 @@ Authentication must not be spread across React components, HTTP handlers, and th
 11. Preserve historical actor assertions exactly as recorded and label them `declared_unverified`. A migration must never resolve labels such as `human:cesar` into a verified user, nor rewrite historical authorship. New authenticated events use a typed actor reference and provenance; a future, separately audited attribution operation may link records without changing their original assertion.
 12. No public self-registration, agent credential linking, agent execution, AWS resource creation, Terraform apply, or production deployment is included in Identity v1 design.
 
-## Candidate comparison (checked 2026-10-10)
+## Historical candidate comparison (checked 2026-10-10)
+
+This initial comparison predates the concrete provider and hosting choices in ADR-0008 and ADR-0011. Use those later ADRs as the active decisions; do not infer that an Essentials tier or the Vercel/API split is required.
 
 | Candidate | Current published entry tier relevant to CodeXPT | Fit / tradeoff |
 |---|---|---|
@@ -83,7 +85,9 @@ Current modules include an SQLx `IdentityStore`, an OIDC adapter, Axum routes/mi
 - Agent runtime identity and an external provider OAuth connection are different security principals/resources; neither inherits human RBAC or human approval authority.
 - Cognito's direct-user free tier can reduce identity charges, but cannot guarantee a near-zero total AWS/Vercel bill.
 
-## Remaining questions before cloud deployment
+## Historical questions before cloud deployment
+
+The hosting/provider choices below were resolved by ADR-0008 and ADR-0011. The release gates there remain open.
 
 - Choose and test the initial-owner bootstrap and invite/recovery procedures without public registration.
 - Validate hosted PostgreSQL choice, connection management, migration parity, total AWS/Vercel costs, and session revocation under the selected runtime.
