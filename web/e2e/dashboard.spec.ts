@@ -266,6 +266,35 @@ test('desktop: accessible, readable dashboard capture', async ({ page }) => {
   await page.screenshot({ path: test.info().outputPath('dashboard-desktop.png'), fullPage: true })
 })
 
+test('timeline labels do not overlap at 320px or the 640px 200% zoom layout', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await createReview(page, `Legibilidad ${Date.now()}`)
+  await page.getByLabel('Contenido del mensaje').fill('Mensaje de prueba para comprobar autoría, destinatario y hora en pantallas estrechas.')
+  await page.getByRole('button', { name: 'Registrar mensaje' }).click()
+  const label = page.getByText('Mensaje de conversación').first()
+  await expect(label).toBeVisible()
+
+  for (const width of [320, 640]) {
+    await page.setViewportSize({ width, height: 900 })
+    const layout = await page.evaluate(() => {
+      const meta = document.querySelector('.message-entry .entry-meta')!
+      const region = document.querySelector('.activity-panel')!
+      const children = [...meta.children].map((element) => {
+        const { left, right, top, bottom } = element.getBoundingClientRect()
+        return { left, right, top, bottom }
+      })
+      const metaBounds = meta.getBoundingClientRect()
+      const regionBounds = region.getBoundingClientRect()
+      const overlaps = children.some((a, index) => children.slice(index + 1).some((b) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1))
+      return { viewport: window.innerWidth, document: document.documentElement.scrollWidth, metaRight: metaBounds.right, regionRight: regionBounds.right, overlaps }
+    })
+    expect(layout.document, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(layout.viewport)
+    expect(layout.metaRight, `timeline metadata exceeds its column at ${width}px`).toBeLessThanOrEqual(layout.regionRight + 1)
+    expect(layout.overlaps, `timeline metadata overlaps at ${width}px`).toBe(false)
+    await expect(label).toBeVisible()
+  }
+})
+
 test('long review titles stay contained from 320px through desktop', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const title = 'ArchitectureDecisionRecord'.repeat(4)
