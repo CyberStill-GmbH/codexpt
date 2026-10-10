@@ -13,9 +13,9 @@
 - [x] README, C4, ADRs, security, operations, and verification records reflect implemented features and unauthenticated local-only limits.
 - [x] `v0.1.0-local-mvp` release reference created after tests and a clean working tree.
 
-## Next phase: Identity v1
+## Identity v1 design (in progress)
 
-Start with design, contracts, an ADR, a threat model, and authorization tests. The approved direction is Rust + SQLx, verified identity, secure sessions, and workspace RBAC (`OWNER`, `EDITOR`, `VIEWER`). Keep local SQLite use working and evaluate a managed OIDC provider using current capabilities, terms, and costs. Do not enable public self-registration or deploy to AWS in this phase. Agent integrations remain separate.
+The review-approved direction is Rust + SQLx, verified identity, secure sessions, workspace RBAC (`OWNER`, `EDITOR`, `VIEWER`), and independent identity/application boundaries. Proposed provider: Cognito Essentials, pending final review. Design, contracts, threat model, and authorization test plan are in `docs/identity-v1/` and ADR-0004. Keep local SQLite working. Do not enable public self-registration or deploy to AWS in this phase. Agent integrations remain separate.
 
 ## Explicitly out of current scope
 
@@ -23,7 +23,7 @@ Start with design, contracts, an ADR, a threat model, and authorization tests. T
 - An unauthenticated web server or public deployment.
 - Paid API, hosted database, AWS/Azure/Vercel, or additional subscription spend.
 - Automatic repository writes, infrastructure changes, or arbitrary shell execution by agents.
-- Public self-registration, AWS deployment, multi-tenant use, and compliance claims.
+- Public self-registration, AWS deployment, agent execution, and compliance claims.
 
 ## Release gates for any next phase
 
