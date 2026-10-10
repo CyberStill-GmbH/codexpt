@@ -39,6 +39,20 @@ Verified on 2026-10-10 from the repository root before tagging `v0.1.0-local-mvp
 
 Axe is an automated check, not a full accessibility certification. The application remains local-only and does not authenticate actors.
 
+## Current local-first verification
+
+Verified on 2026-10-10 from `C:\projects\codexpt` on `feature/local-dashboard`. This worktree also contains an unfinished hosted identity prototype; these results prove local behavior only and do not certify Cognito, hosted authorization, or deployment.
+
+- `cargo fmt --check`, `cargo test` (32 passed), and `cargo clippy --all-targets --all-features -- -D warnings` passed.
+- `npm --prefix web test -- --run` passed 3 tests; `npm --prefix web run lint` and `npm --prefix web run build` passed.
+- `npm --prefix web run test:e2e` passed 3 Playwright cases: a complete human review flow on mobile, responsive tablet layout, and desktop accessibility. Axe reported no WCAG 2.1 A/AA violations in the audited mobile and desktop flows.
+- The E2E runner starts Rust on loopback with a unique SQLite file and removes that database plus WAL sidecars after Playwright and its server exit. Cleanup was verified: the generated file was absent and port 4174 was closed.
+- `scripts/smoke.ps1` passed using a disposable SQLite database: one synthetic review, one message, and eight audit events, including human approval.
+- A manual local launch on `127.0.0.1:4173` returned `GET /api/health` = `{"mode":"local","status":"ok"}` and `GET /` = HTTP 200 with title `CodeXPT · cuaderno de revisión`. The browser showed the empty local workspace and its create-review action. The process was stopped after verification; ports 4173 and 4174 are closed.
+- Terraform formatting and `terraform validate` passed. No plan, cloud resource creation, DNS mutation, paid API call, or external model integration was performed.
+
+The local dashboard is usable for manually recording review conversations; agents still exchange content through the human director. Actor labels are not authenticated. Hosted identity and infra remain follow-on work with separate acceptance gates.
+
 ## Test data and privacy
 
 Use synthetic tasks and evidence only. Tests must not call external model services or use real provider credentials. Temporary DB files must be removed by test fixtures. Do not store outputs from unrelated user conversations in test data.
