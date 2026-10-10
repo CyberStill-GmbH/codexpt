@@ -1,23 +1,21 @@
 # CodeXPT
 
-Workspace local para registrar propuestas, revisiones, evidencia y decisiones humanas con un historial auditable. El core es Rust + SQLite; el dashboard local de React/TypeScript se sirve desde Rust y no depende de infraestructura hospedada.
+**Release:** `v0.1.0-local-mvp`. Workspace local para registrar propuestas, revisiones, evidencia y decisiones humanas con un historial auditable. El core es Rust + SQLite; el dashboard local de React/TypeScript se sirve desde Rust y no depende de infraestructura hospedada.
 
 ## Requisitos
 
 - Rust estable con Cargo.
-- Node.js LTS + npm para construir el dashboard desde `web/`.
+- Node.js + npm para reconstruir los recursos estáticos del dashboard desde `web/`; no se requiere Node en tiempo de ejecución.
 
 ## Uso
 
 ```powershell
 cargo run -- init
 cargo run -- task create --title "Revisar propuesta" --description "Tarea de ejemplo"
-npm --prefix web ci
-npm --prefix web run build
 cargo run -- serve
 ```
 
-El dashboard queda en `http://127.0.0.1:4173`. El servidor solo escucha en loopback. Deténlo con `Ctrl+C` al terminar. Para instrucciones, seguridad y recuperación, consulta [`docs/OPERATIONS.md`](docs/OPERATIONS.md) y [`docs/SECURITY.md`](docs/SECURITY.md).
+El dashboard queda en `http://127.0.0.1:4173`. El servidor solo escucha en loopback. Deténlo con `Ctrl+C` al terminar. Los recursos compilados se incluyen en el repositorio y se sirven desde el binario Rust. Para reconstruirlos tras editar la UI: `npm --prefix web ci && npm --prefix web run build`, y luego recompila Rust. Consulta [`docs/OPERATIONS.md`](docs/OPERATIONS.md) y [`docs/SECURITY.md`](docs/SECURITY.md).
 
 La CLI imprime JSON. Copia el `task_id` y úsalo en los siguientes comandos:
 
@@ -46,9 +44,9 @@ Por defecto la base queda en `.codexpt/state.sqlite3`. El archivo está ignorado
 - Los nombres de actor (`agent:codex`, `agent:chatgpt`, `human:cesar`) son etiquetas declaradas, no identidades autenticadas. No usar el buzón para secretos.
 - SQLite activa claves foráneas, WAL, transacciones inmediatas y un timeout de escritura. Las transiciones requieren el estado esperado para rechazar escrituras obsoletas.
 
-## Límites de Fase 1
+## Alcance y límites de v0.1.0-local-mvp
 
-El MVP local valida esquema, transiciones, atomicidad, idempotencia, recuperación e historial y permite operar esas funciones desde el dashboard. No conecta automáticamente sesiones ni demuestra que reduzca el tiempo humano: los mensajes de otros agentes siguen siendo ingresados por una persona. La evaluación comparativa de 12 tareas pertenece a una fase posterior.
+El MVP local valida esquema, transiciones, atomicidad, idempotencia, recuperación e historial y permite operar esas funciones desde el dashboard. No conecta automáticamente sesiones ni demuestra que reduzca el tiempo humano: los mensajes de otros agentes siguen siendo ingresados por una persona. Las etiquetas se pueden suplantar por cualquier proceso con acceso local; no es autenticación. La evaluación comparativa de 12 tareas pertenece a una fase posterior.
 
 ## Validación local
 
@@ -57,6 +55,8 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 npm --prefix web run test
 npm --prefix web run build
+npm --prefix web run test:e2e
+./scripts/smoke.ps1
 ```
 
 Arquitectura C4, decisiones y estrategia de verificación: [`docs/architecture/C4.md`](docs/architecture/C4.md), [`docs/adr/`](docs/adr/) y [`docs/TESTING.md`](docs/TESTING.md). El experimento y sus límites están en [`EXPERIMENT.md`](EXPERIMENT.md).

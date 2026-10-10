@@ -27,6 +27,8 @@ pub enum AppError {
     HumanApprovalRequired,
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("internal worker error: {0}")]
+    Internal(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +101,11 @@ impl EvidenceRef {
                 "evidence label and locator must not be empty".into(),
             ));
         }
+        if self.label.chars().count() > 120 || self.locator.chars().count() > 2048 {
+            return Err(AppError::InvalidInput(
+                "evidence label or locator exceeds its length limit".into(),
+            ));
+        }
         if self.sha256.len() != 64 || !self.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(AppError::InvalidInput(
                 "evidence sha256 must contain exactly 64 hexadecimal characters".into(),
@@ -149,6 +156,25 @@ impl Message {
                 return Err(AppError::InvalidInput(format!("{name} must not be empty")));
             }
         }
+        for (name, value, limit) in [
+            ("message_id", self.message_id.as_str(), 128),
+            ("task_id", self.task_id.as_str(), 128),
+            ("sender", self.sender.as_str(), 120),
+            ("recipient", self.recipient.as_str(), 120),
+            ("correlation_id", self.correlation_id.as_str(), 128),
+            ("body", self.body.as_str(), 12_000),
+        ] {
+            if value.chars().count() > limit {
+                return Err(AppError::InvalidInput(format!(
+                    "{name} exceeds {limit} characters"
+                )));
+            }
+        }
+        if self.evidence_refs.len() > 32 {
+            return Err(AppError::InvalidInput(
+                "a message can contain at most 32 evidence references".into(),
+            ));
+        }
         for evidence in &self.evidence_refs {
             evidence.validate()?;
         }
@@ -176,4 +202,14 @@ pub struct TaskEvent {
     pub correlation_id: String,
     pub details: serde_json::Value,
     pub occurred_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HumanDecision {
+    pub decision_id: String,
+    pub task_id: String,
+    pub question: String,
+    pub requested_by: String,
+    pub status: String,
+    pub created_at: String,
 }

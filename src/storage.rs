@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::domain::{AppError, Message, MessageStatus, Task, TaskEvent, TaskStatus};
+use crate::domain::{AppError, HumanDecision, Message, MessageStatus, Task, TaskEvent, TaskStatus};
 
 const CURRENT_SCHEMA_VERSION: i64 = 1;
 
@@ -40,6 +40,9 @@ impl Store {
                 "title and actor must not be empty".into(),
             ));
         }
+        validate_length("title", title, 160)?;
+        validate_length("description", description, 4_000)?;
+        validate_length("actor", actor, 120)?;
         let task_id = Uuid::new_v4().to_string();
         let now = now();
         let transaction = self
@@ -77,6 +80,38 @@ impl Store {
             .map_err(AppError::from)
     }
 
+    pub fn list_tasks(&self) -> Result<Vec<Task>, AppError> {
+        let mut statement = self.connection.prepare(
+            "SELECT t.task_id, t.title, t.description, t.status,
+                    EXISTS(SELECT 1 FROM human_decisions d WHERE d.task_id = t.task_id AND d.status = 'pending'),
+                    t.created_at, t.updated_at
+             FROM tasks t ORDER BY t.updated_at DESC, t.task_id ASC",
+        )?;
+        let rows = statement.query_map([], row_to_task)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+    }
+
+    pub fn get_pending_decision(&self, task_id: &str) -> Result<Option<HumanDecision>, AppError> {
+        self.connection
+            .query_row(
+                "SELECT decision_id, task_id, question, requested_by, status, created_at
+                 FROM human_decisions WHERE task_id = ?1 AND status = 'pending'",
+                [task_id],
+                |row| {
+                    Ok(HumanDecision {
+                        decision_id: row.get(0)?,
+                        task_id: row.get(1)?,
+                        question: row.get(2)?,
+                        requested_by: row.get(3)?,
+                        status: row.get(4)?,
+                        created_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(AppError::from)
+    }
+
     pub fn transition_task(
         &mut self,
         task_id: &str,
@@ -96,6 +131,8 @@ impl Store {
                 "actor and correlation_id must not be empty".into(),
             ));
         }
+        validate_length("actor", actor, 120)?;
+        validate_length("correlation_id", correlation_id, 128)?;
         if next == TaskStatus::Approved && actor != "human:cesar" {
             return Err(AppError::HumanApprovalRequired);
         }
@@ -165,6 +202,10 @@ impl Store {
                 "decision_id, question and actor must not be empty".into(),
             ));
         }
+        validate_length("decision_id", decision_id, 128)?;
+        validate_length("question", question, 2_000)?;
+        validate_length("actor", actor, 120)?;
+        validate_length("correlation_id", correlation_id, 128)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -189,6 +230,10 @@ impl Store {
             "INSERT INTO human_decisions (decision_id, task_id, state_at_request, question, requested_by, status, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
             params![decision_id, task_id, status, question.trim(), actor, timestamp],
+        )?;
+        transaction.execute(
+            "UPDATE tasks SET updated_at = ?2 WHERE task_id = ?1",
+            params![task_id, timestamp],
         )?;
         append_event(
             &transaction,
@@ -216,6 +261,8 @@ impl Store {
         if answer.trim().is_empty() {
             return Err(AppError::InvalidInput("answer must not be empty".into()));
         }
+        validate_length("answer", answer, 4_000)?;
+        validate_length("correlation_id", correlation_id, 128)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -238,6 +285,10 @@ impl Store {
             "UPDATE human_decisions SET status = 'answered', answer = ?3, answered_by = ?4, answered_at = ?5
              WHERE decision_id = ?1 AND task_id = ?2 AND status = 'pending'",
             params![decision_id, task_id, answer.trim(), actor, timestamp],
+        )?;
+        transaction.execute(
+            "UPDATE tasks SET updated_at = ?2 WHERE task_id = ?1",
+            params![task_id, timestamp],
         )?;
         append_event(
             &transaction,
@@ -322,6 +373,10 @@ impl Store {
                 message.created_at,
                 payload_hash,
             ],
+        )?;
+        transaction.execute(
+            "UPDATE tasks SET updated_at = ?2 WHERE task_id = ?1",
+            params![message.task_id, message.created_at],
         )?;
         append_event(
             &transaction,
@@ -440,6 +495,15 @@ fn append_event(
 
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn validate_length(name: &str, value: &str, limit: usize) -> Result<(), AppError> {
+    if value.chars().count() > limit {
+        return Err(AppError::InvalidInput(format!(
+            "{name} exceeds {limit} characters"
+        )));
+    }
+    Ok(())
 }
 
 fn migrate(connection: &mut Connection) -> Result<(), AppError> {

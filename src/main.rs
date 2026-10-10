@@ -23,6 +23,10 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Init,
+    Serve {
+        #[arg(long, default_value_t = 4173)]
+        port: u16,
+    },
     Task {
         #[command(subcommand)]
         command: TaskCommand,
@@ -106,123 +110,133 @@ enum MessageCommand {
     },
 }
 
-fn main() {
-    if let Err(error) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(error) = run().await {
         eprintln!("error: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let mut store = Store::open(&cli.db)?;
+    let db = cli.db;
     match cli.command {
-        Command::Init => println!("initialized {}", cli.db.display()),
-        Command::Task { command } => match command {
-            TaskCommand::Create {
-                title,
-                description,
-                actor,
-            } => print_json(&store.create_task(&title, &description, &actor)?)?,
-            TaskCommand::Show { task_id } => {
-                let task = store
-                    .get_task(&task_id)?
-                    .ok_or_else(|| format!("task {task_id} not found"))?;
-                print_json(&task)?;
+        Command::Serve { port } => codexpt::web::serve(db, port).await?,
+        command => {
+            let mut store = Store::open(&db)?;
+            match command {
+                Command::Init => println!("initialized {}", db.display()),
+                Command::Task { command } => match command {
+                    TaskCommand::Create {
+                        title,
+                        description,
+                        actor,
+                    } => print_json(&store.create_task(&title, &description, &actor)?)?,
+                    TaskCommand::Show { task_id } => {
+                        let task = store
+                            .get_task(&task_id)?
+                            .ok_or_else(|| format!("task {task_id} not found"))?;
+                        print_json(&task)?;
+                    }
+                    TaskCommand::Transition {
+                        task_id,
+                        expect,
+                        to,
+                        actor,
+                        correlation_id,
+                    } => {
+                        let correlation_id = nonempty_or_uuid(correlation_id);
+                        print_json(&store.transition_task(
+                            &task_id,
+                            expect,
+                            to,
+                            &actor,
+                            &correlation_id,
+                        )?)?;
+                    }
+                    TaskCommand::RequestDecision {
+                        task_id,
+                        question,
+                        actor,
+                        correlation_id,
+                    } => {
+                        let decision_id = Uuid::new_v4().to_string();
+                        let correlation_id = nonempty_or_uuid(correlation_id);
+                        store.request_human_decision(
+                            &task_id,
+                            &decision_id,
+                            &question,
+                            &actor,
+                            &correlation_id,
+                        )?;
+                        println!(
+                            "{}",
+                            serde_json::json!({"decision_id": decision_id, "status": "pending"})
+                        );
+                    }
+                    TaskCommand::AnswerDecision {
+                        task_id,
+                        decision_id,
+                        answer,
+                        actor,
+                        correlation_id,
+                    } => {
+                        let correlation_id = nonempty_or_uuid(correlation_id);
+                        store.answer_human_decision(
+                            &task_id,
+                            &decision_id,
+                            &answer,
+                            &actor,
+                            &correlation_id,
+                        )?;
+                        println!(
+                            "{}",
+                            serde_json::json!({"decision_id": decision_id, "status": "answered"})
+                        );
+                    }
+                },
+                Command::Message { command } => match command {
+                    MessageCommand::Send {
+                        task_id,
+                        sender,
+                        recipient,
+                        body,
+                        correlation_id,
+                        parent_id,
+                        evidence,
+                        message_id,
+                    } => {
+                        let message = Message {
+                            schema_version: MESSAGE_SCHEMA_VERSION,
+                            message_id: message_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                            task_id,
+                            sender,
+                            recipient,
+                            correlation_id: nonempty_or_uuid(correlation_id),
+                            parent_id,
+                            status: MessageStatus::Recorded,
+                            body,
+                            evidence_refs: evidence
+                                .iter()
+                                .map(|value| parse_evidence(value))
+                                .collect::<Result<_, _>>()?,
+                            created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+                        };
+                        let inserted = store.insert_message(&message)?;
+                        println!(
+                            "{}",
+                            serde_json::json!({"message": message, "inserted": inserted})
+                        );
+                    }
+                    MessageCommand::List { task_id } => {
+                        print_json(&store.list_messages(&task_id)?)?
+                    }
+                },
+                Command::Events { task_id } => print_json(&store.list_events(&task_id)?)?,
+                Command::Serve { .. } => unreachable!("serve is handled before opening SQLite"),
             }
-            TaskCommand::Transition {
-                task_id,
-                expect,
-                to,
-                actor,
-                correlation_id,
-            } => {
-                let correlation_id = nonempty_or_uuid(correlation_id);
-                print_json(&store.transition_task(
-                    &task_id,
-                    expect,
-                    to,
-                    &actor,
-                    &correlation_id,
-                )?)?;
-            }
-            TaskCommand::RequestDecision {
-                task_id,
-                question,
-                actor,
-                correlation_id,
-            } => {
-                let decision_id = Uuid::new_v4().to_string();
-                let correlation_id = nonempty_or_uuid(correlation_id);
-                store.request_human_decision(
-                    &task_id,
-                    &decision_id,
-                    &question,
-                    &actor,
-                    &correlation_id,
-                )?;
-                println!(
-                    "{}",
-                    serde_json::json!({"decision_id": decision_id, "status": "pending"})
-                );
-            }
-            TaskCommand::AnswerDecision {
-                task_id,
-                decision_id,
-                answer,
-                actor,
-                correlation_id,
-            } => {
-                let correlation_id = nonempty_or_uuid(correlation_id);
-                store.answer_human_decision(
-                    &task_id,
-                    &decision_id,
-                    &answer,
-                    &actor,
-                    &correlation_id,
-                )?;
-                println!(
-                    "{}",
-                    serde_json::json!({"decision_id": decision_id, "status": "answered"})
-                );
-            }
-        },
-        Command::Message { command } => match command {
-            MessageCommand::Send {
-                task_id,
-                sender,
-                recipient,
-                body,
-                correlation_id,
-                parent_id,
-                evidence,
-                message_id,
-            } => {
-                let message = Message {
-                    schema_version: MESSAGE_SCHEMA_VERSION,
-                    message_id: message_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                    task_id,
-                    sender,
-                    recipient,
-                    correlation_id: nonempty_or_uuid(correlation_id),
-                    parent_id,
-                    status: MessageStatus::Recorded,
-                    body,
-                    evidence_refs: evidence
-                        .iter()
-                        .map(|value| parse_evidence(value))
-                        .collect::<Result<_, _>>()?,
-                    created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-                };
-                let inserted = store.insert_message(&message)?;
-                println!(
-                    "{}",
-                    serde_json::json!({"message": message, "inserted": inserted})
-                );
-            }
-            MessageCommand::List { task_id } => print_json(&store.list_messages(&task_id)?)?,
-        },
-        Command::Events { task_id } => print_json(&store.list_events(&task_id)?)?,
+        }
     }
     Ok(())
 }
