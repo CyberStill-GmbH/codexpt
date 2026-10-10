@@ -842,6 +842,23 @@ async fn readiness(State(state): State<AppState>) -> Response {
             .into_response();
     }
 
+    let database_path = state.database_path.clone();
+    let task_store_is_available = tokio::task::spawn_blocking(move || {
+        Store::open(database_path).and_then(|store| store.ping())
+    })
+    .await
+    .is_ok_and(|result| result.is_ok());
+    if !task_store_is_available {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "status": "not_ready",
+                "reason": "task storage is unavailable"
+            })),
+        )
+            .into_response();
+    }
+
     Json(serde_json::json!({"status": "ready", "mode": "hosted"})).into_response()
 }
 
@@ -1653,6 +1670,39 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         std::fs::remove_file(path).ok();
+    }
+
+    #[tokio::test]
+    async fn readiness_fails_when_task_storage_is_unavailable() {
+        let identity_file = NamedTempFile::new().unwrap();
+        let identity_path = identity_file.into_temp_path().keep().unwrap();
+        let identity = IdentityStore::connect_sqlite(&identity_path, 1)
+            .await
+            .unwrap();
+        let task_db_directory = tempfile::tempdir().unwrap();
+        let unavailable_database = task_db_directory.path().join("tasks.sqlite3");
+        std::fs::create_dir(&unavailable_database).unwrap();
+        let state = AppState {
+            database_path: unavailable_database,
+            port: PORT,
+            identity: Some(identity),
+            oidc: Some(OidcConfig {
+                issuer: "https://issuer.example".into(),
+                client_id: "client-test".into(),
+                redirect_uri: "https://codexpt.example/api/auth/callback".into(),
+                success_url: "https://codexpt.example/".into(),
+            }),
+            api_host: Some("codexpt.example".into()),
+            web_origin: Some("https://codexpt.example".into()),
+        };
+
+        let response = readiness(State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["reason"], "task storage is unavailable");
+        std::fs::remove_file(identity_path).ok();
     }
 
     #[test]

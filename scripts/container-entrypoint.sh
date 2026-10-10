@@ -15,6 +15,34 @@ fi
 
 PORT="${PORT:-4173}"
 CODEXPT_DB_PATH="${CODEXPT_DB_PATH:-/data/codexpt.sqlite3}"
+case "$CODEXPT_DB_PATH" in
+    /data/*) relative_db_path=${CODEXPT_DB_PATH#/data/} ;;
+    *)
+        echo "CODEXPT_DB_PATH must be a normalized path below /data" >&2
+        exit 1
+        ;;
+esac
+case "$relative_db_path" in
+    ''|/*|*//*|.|./*|*/./*|*/.|..|../*|*/../*|*/..|*/)
+        echo "CODEXPT_DB_PATH must be a normalized path below /data" >&2
+        exit 1
+        ;;
+esac
+if [ -L "$CODEXPT_DB_PATH" ] || [ -d "$CODEXPT_DB_PATH" ]; then
+    echo "CODEXPT_DB_PATH must be a regular database file below /data" >&2
+    exit 1
+fi
+database_parent=$(dirname -- "$CODEXPT_DB_PATH")
+mkdir -p -- "$database_parent"
+canonical_data=$(realpath -e -- /data)
+canonical_parent=$(realpath -e -- "$database_parent")
+case "$canonical_parent" in
+    "$canonical_data"|"$canonical_data"/*) ;;
+    *)
+        echo "CODEXPT_DB_PATH resolves outside the mounted /data volume" >&2
+        exit 1
+        ;;
+esac
 CODEXPT_BIND_ADDR="${CODEXPT_BIND_ADDR:-0.0.0.0:${PORT}}"
 export CODEXPT_BIND_ADDR
 

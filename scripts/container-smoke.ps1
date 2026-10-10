@@ -52,6 +52,31 @@ try {
     }
 
     Invoke-Docker -DockerArgs @('volume', 'create', $dataVolume) | Out-Null
+
+    foreach ($invalidDatabasePath in @(
+        'relative.sqlite3',
+        '/tmp/codexpt.sqlite3',
+        '/data/../tmp/codexpt.sqlite3'
+    )) {
+        $invalidPath = Invoke-Docker -ExpectedExitCode 1 -DockerArgs (@(
+            'run', '--rm', '-v', "${dataVolume}:/data"
+        ) + $oidcEnvironment + @('-e', "CODEXPT_DB_PATH=$invalidDatabasePath", $image))
+        if ($invalidPath.Output -notmatch 'CODEXPT_DB_PATH must be a normalized path below /data') {
+            throw "The container accepted an unsafe database path: $invalidDatabasePath"
+        }
+    }
+
+    Invoke-Docker -DockerArgs @(
+        'run', '--rm', '--user', '0', '--entrypoint', '/bin/sh',
+        '-v', "${dataVolume}:/data", $image, '-c', 'ln -s /tmp /data/escape'
+    ) | Out-Null
+    $symlinkEscape = Invoke-Docker -ExpectedExitCode 1 -DockerArgs (@(
+        'run', '--rm', '-v', "${dataVolume}:/data"
+    ) + $oidcEnvironment + @('-e', 'CODEXPT_DB_PATH=/data/escape/codexpt.sqlite3', $image))
+    if ($symlinkEscape.Output -notmatch 'CODEXPT_DB_PATH resolves outside the mounted /data volume') {
+        throw 'The container accepted a database path that escapes /data through a symlink.'
+    }
+
     $missingIdentity = Invoke-Docker -ExpectedExitCode 2 -DockerArgs @(
         'run', '--rm', '-v', "${dataVolume}:/data", $image
     )
@@ -108,8 +133,36 @@ try {
         '--workspace-name', 'Container-Smoke'
     ) | Out-Null
 
-    $writer = 'i=1; while [ "$i" -le 50 ]; do /usr/local/bin/codexpt --db /data/codexpt.sqlite3 task create --title "shutdown-smoke-$i" --description synthetic >/dev/null 2>&1; i=$((i+1)); done'
+    $baselineTaskIds = @()
+    for ($index = 1; $index -le 8; $index++) {
+        $createdTask = Invoke-Docker -DockerArgs @(
+            'exec', $containerName, '/usr/local/bin/codexpt', '--db', '/data/codexpt.sqlite3',
+            'task', 'create', '--title', "confirmed-smoke-$index", '--description', 'committed before SIGTERM'
+        )
+        $baselineTaskIds += ($createdTask.Output | ConvertFrom-Json).task_id
+    }
+    if (@($baselineTaskIds | Select-Object -Unique).Count -ne 8) {
+        throw 'The deterministic SIGTERM baseline did not produce eight unique confirmed task IDs.'
+    }
+
+    $writer = 'i=1; while [ "$i" -le 50 ]; do /usr/local/bin/codexpt --db /data/codexpt.sqlite3 task create --title "shutdown-smoke-$i" --description synthetic >/dev/null 2>&1; if [ "$i" -eq 1 ]; then : > /tmp/writer-started; fi; i=$((i+1)); sleep 0.05; done'
     Invoke-Docker -DockerArgs @('exec', '-d', $containerName, '/bin/sh', '-c', $writer) | Out-Null
+    $writerStarted = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        & docker exec $containerName test -f /tmp/writer-started 2>$null | Out-Null
+        $markerExitCode = $LASTEXITCODE
+        if ($markerExitCode -notin @(0, 1)) {
+            throw "Checking the concurrent writer marker failed with exit code $markerExitCode."
+        }
+        if ($markerExitCode -eq 0) {
+            $writerStarted = $true
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $writerStarted) {
+        throw 'The concurrent task writer did not signal that it had started.'
+    }
     Invoke-Docker -DockerArgs @('stop', '--timeout', '10', $containerName) | Out-Null
 
     $exitCode = (Invoke-Docker -DockerArgs @(
@@ -124,9 +177,26 @@ try {
     $tasks = Invoke-Docker -DockerArgs @(
         'exec', $containerName, '/usr/local/bin/codexpt', '--db', '/data/codexpt.sqlite3', 'task', 'list'
     )
-    $taskCount = @($tasks.Output | ConvertFrom-Json).Count
-    if ($taskCount -lt 1) {
-        throw 'Task data did not survive SIGTERM and container restart.'
+    $taskRows = @($tasks.Output | ConvertFrom-Json)
+    $taskIds = @($taskRows | ForEach-Object { $_.task_id })
+    if (@($taskIds | Select-Object -Unique).Count -ne $taskIds.Count) {
+        throw 'The task database contains duplicate task IDs after SIGTERM and restart.'
+    }
+    foreach ($taskId in $baselineTaskIds) {
+        if ($taskId -notin $taskIds) {
+            throw "Confirmed task $taskId did not survive SIGTERM and container restart."
+        }
+    }
+    if ($baselineTaskIds.Count -ne 8) {
+        throw 'The confirmed SIGTERM baseline did not contain exactly eight tasks.'
+    }
+    $taskCount = $taskRows.Count
+
+    $integrity = Invoke-Docker -DockerArgs @(
+        'exec', $containerName, '/usr/local/bin/codexpt', '--db', '/data/codexpt.sqlite3', 'db-check'
+    )
+    if (($integrity.Output | ConvertFrom-Json).integrity -ne 'ok') {
+        throw "SQLite integrity check failed after SIGTERM: $($integrity.Output)"
     }
 
     $duplicateBootstrap = Invoke-Docker -ExpectedExitCode 1 -DockerArgs @(
@@ -152,6 +222,18 @@ try {
     )
     if (@($restoredTasks.Output | ConvertFrom-Json).Count -ne $taskCount) {
         throw 'Restored SQLite backup did not preserve the synthetic task set.'
+    }
+    $restoredIds = @(($restoredTasks.Output | ConvertFrom-Json) | ForEach-Object { $_.task_id })
+    foreach ($taskId in $baselineTaskIds) {
+        if ($taskId -notin $restoredIds) {
+            throw "Confirmed task $taskId is missing from the restored backup."
+        }
+    }
+    $restoredIntegrity = Invoke-Docker -DockerArgs @(
+        'exec', $containerName, '/usr/local/bin/codexpt', '--db', '/data/restored.sqlite3', 'db-check'
+    )
+    if (($restoredIntegrity.Output | ConvertFrom-Json).integrity -ne 'ok') {
+        throw "Restored SQLite database failed its integrity check: $($restoredIntegrity.Output)"
     }
 
     Write-Host "Container smoke passed: image=$image uid=$runtimeUser health=$health frontend=200 tasks=$taskCount backup=restored"

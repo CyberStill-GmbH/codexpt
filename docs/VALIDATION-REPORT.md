@@ -2,17 +2,17 @@
 
 ## Current release-candidate status — 2026-10-10
 
-**Source:** local `main` worktree; not yet published from this candidate.
+**Source:** `main` release-candidate snapshot; this report records local verification, not a hosted deployment.
 **Status:** local quality gates pass; hosted public release is still blocked on live OIDC, the complete HTTP authorization/CSRF matrix, persistent-volume restore proof, hosted E2E, and an inspected Railway account/cost baseline.
 
 | Area | Current result |
 |---|---|
-| Rust | 37 tests passed; `cargo fmt --check` and Clippy with warnings denied passed |
+| Rust | 39 tests passed; `cargo fmt --check` and Clippy with warnings denied passed |
 | Frontend | 6 Vitest tests; lint/build passed |
 | Browser E2E | 12 Playwright cases passed; includes responsive layout and Owner role/revocation flow with synthetic fixtures |
 | Accessibility | Axe reported no violations in the audited E2E routes; this is not certification |
 | Impeccable UI detector | No findings on the changed dashboard targets |
-| Container | 40.8 MB image, pinned base digests, non-root UID 10001 and read-only root filesystem; repeatable smoke passed (missing/read-only `/data` rejected, ready checks SQLite, frontend HTTP 200, SIGTERM exit 0 during a synthetic write batch, 8 committed tasks survived restart, backup/restore preserved all 8) |
+| Container | 40.8 MB image, pinned base digests, non-root UID 10001 and read-only root filesystem; repeatable smoke passed (rejects missing/read-only `/data`, unsafe DB paths and symlink escapes; task-store readiness, frontend HTTP 200, SIGTERM exit 0, 8 confirmed task IDs survive concurrent writes and restart, SQLite integrity check passes, backup/restore preserves all 14 tasks) |
 | Cloud | No Railway service/domain, AWS resources, DNS, or certificate changed |
 
 Container verification is reproducible with `scripts/container-smoke.ps1` and used only a synthetic OIDC issuer and identity; it does not establish live provider authentication. The browser member-management flow uses synthetic API fixtures and does not establish production authorization. Railway CLI reports that no project is linked in this workspace. The reported Hobby plan and any monthly cost remain unverified against the account. The UI tests do not prove invitation email delivery or the complete HTTP authorization matrix.

@@ -34,6 +34,8 @@ enum Command {
         #[arg(long)]
         backup: PathBuf,
     },
+    /// Run SQLite's full integrity check and print its result.
+    DbCheck,
     Serve {
         #[arg(long, default_value_t = 4173)]
         port: u16,
@@ -196,6 +198,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let mut store = Store::open(&db)?;
             match command {
                 Command::Init => println!("initialized {}", db.display()),
+                Command::DbCheck => print_json(&serde_json::json!({
+                    "integrity": store.integrity_check()?
+                }))?,
                 Command::Task { command } => match command {
                     TaskCommand::List => print_json(&store.list_tasks()?)?,
                     TaskCommand::Create {

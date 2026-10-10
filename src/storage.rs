@@ -35,6 +35,21 @@ impl Store {
         })
     }
 
+    /// Verify that the task/review database can answer a minimal query.
+    pub fn ping(&self) -> Result<(), AppError> {
+        self.connection
+            .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get::<_, i64>(0))?;
+        Ok(())
+    }
+
+    /// Return SQLite's full integrity-check result for operational smoke tests.
+    pub fn integrity_check(&self) -> Result<String, AppError> {
+        let mut statement = self.connection.prepare("PRAGMA integrity_check")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let messages = rows.collect::<Result<Vec<_>, _>>()?;
+        Ok(messages.join("\n"))
+    }
+
     /// Create a consistent online SQLite backup without copying a live WAL database.
     pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<(), AppError> {
         let destination = destination.as_ref();
