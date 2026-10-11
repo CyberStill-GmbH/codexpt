@@ -10,9 +10,58 @@ const task = {
 const detail = { task, messages: [], events: [{ sequence: 1, event_type: 'task_created', actor: 'human:cesar', occurred_at: task.created_at, details: { status: 'open' } }], pending_decision: null }
 const json = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => data })
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/') })
 
 describe('CodeXPT dashboard smoke', () => {
+  it('shows a startup screen until the workspace request finishes', async () => {
+    let resolveStatus!: (response: ReturnType<typeof json>) => void
+    const pendingStatus = new Promise<ReturnType<typeof json>>((resolve) => { resolveStatus = resolve })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/auth/status') return pendingStatus
+      if (url === '/api/tasks') return json([])
+      return json({ error: 'not found' }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    expect(screen.getByText('Abriendo el registro de revisiones…')).toBeTruthy()
+    expect(screen.getByRole('status').getAttribute('aria-busy')).toBe('true')
+    resolveStatus(json({ configured: false }))
+    expect(await screen.findByRole('heading', { name: 'El espacio está listo.' })).toBeTruthy()
+  })
+
+  it('renders a helpful branded 404 instead of the dashboard for unknown routes', () => {
+    window.history.pushState({}, '', '/ruta-que-no-existe')
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: 'Esta ruta no existe.' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Volver a revisiones' }).getAttribute('href')).toBe('/')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('changes review content as a single motion-ready surface', async () => {
+    const secondTask = { ...task, task_id: 'task-2', title: 'Segunda revisión' }
+    const secondDetail = { ...detail, task: secondTask }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/auth/status') return json({ configured: false })
+      if (url === '/api/tasks') return json([task, secondTask])
+      if (url === `/api/tasks/${task.task_id}`) return json(detail)
+      if (url === `/api/tasks/${secondTask.task_id}`) return json(secondDetail)
+      return json({ error: 'not found' }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: task.title })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /segunda revisión/i }))
+    expect(await screen.findByRole('heading', { name: secondTask.title })).toBeTruthy()
+    expect(document.querySelector('.review-screen')?.classList.contains('review-screen')).toBe(true)
+  })
+
   it('creates a real review through its API and opens the persisted detail', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)

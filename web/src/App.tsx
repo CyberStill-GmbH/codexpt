@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { IconArrowDownLeft as ArrowDownLeft, IconArrowUpRight as ArrowUpRight, IconCheck as Check, IconChevronDown as ChevronDown, IconCircleDot as CircleDot, IconClock as Clock3, IconFileText as FileText, IconLock as LockKeyhole, IconLogout as LogOut, IconPlus as Plus, IconSearch as Search, IconSend as Send, IconShieldExclamation as ShieldAlert, IconShieldCheck as ShieldCheck, IconSparkles as Sparkles, IconUserX as UserRoundX, IconUsers as Users } from '@tabler/icons-react'
+import { IconArrowDownLeft as ArrowDownLeft, IconArrowLeft as ArrowLeft, IconArrowUpRight as ArrowUpRight, IconCheck as Check, IconChevronDown as ChevronDown, IconCircleDot as CircleDot, IconClock as Clock3, IconFileText as FileText, IconLock as LockKeyhole, IconLogout as LogOut, IconPlus as Plus, IconSearch as Search, IconSend as Send, IconShieldExclamation as ShieldAlert, IconShieldCheck as ShieldCheck, IconSparkles as Sparkles, IconUserX as UserRoundX, IconUsers as Users } from '@tabler/icons-react'
 import loginCollaborationImage from './assets/login/login-collaboration.webp'
 import './App.css'
 
@@ -82,10 +82,41 @@ function BrandMark() {
     <circle cx="15.2" cy="12.1" r=".55" className="panda-eye" />
     <path className="panda-muzzle" d="M10.2 15.1c.4-.7 1-1 1.8-1s1.4.3 1.8 1c-.1 1.1-.8 1.8-1.8 1.8s-1.7-.7-1.8-1.8z" />
     <path className="panda-mouth" d="M12 16.8v1m0 0c-.6.8-1.3.9-2 .4m2-.4c.6.8 1.3.9 2 .4" />
-    <path className="panda-path panda-path-left" d="M5.1 19.2c.3 2.2 2.8 3.6 6.9 3.8" />
-    <path className="panda-path panda-path-right" d="M18.9 19.2c-.3 2.2-2.8 3.6-6.9 3.8" />
+    <path className="panda-path panda-path-left" pathLength="1" d="M5.1 19.2c.3 2.2 2.8 3.6 6.9 3.8" />
+    <path className="panda-path panda-path-right" pathLength="1" d="M18.9 19.2c-.3 2.2-2.8 3.6-6.9 3.8" />
     <circle cx="12" cy="23" r=".65" className="panda-node" />
   </svg>
+}
+
+function StartupSplash() {
+  return <main className="startup-splash" role="status" aria-live="polite" aria-busy="true">
+    <div className="startup-splash-content">
+      <span className="startup-mark"><BrandMark /></span>
+      <div>
+        <strong>CodeXPT</strong>
+        <p>Abriendo el registro de revisiones…</p>
+      </div>
+    </div>
+    <div className="startup-rule" aria-hidden="true"><span /></div>
+  </main>
+}
+
+function NotFound() {
+  return <main className="not-found-page">
+    <header className="not-found-header">
+      <a className="brand" href="/" aria-label="CodeXPT, volver a revisiones"><BrandMark /><span className="brand-word">Code<span>XPT</span></span></a>
+      <span className="not-found-code">Error 404</span>
+    </header>
+    <section className="not-found-content" aria-labelledby="not-found-title">
+      <div className="not-found-art"><img src="/not-found.webp" alt="" fetchPriority="high" /></div>
+      <div className="not-found-copy">
+        <h1 id="not-found-title">Esta ruta no existe.</h1>
+        <p>La dirección no corresponde a una vista de CodeXPT. Vuelve al registro para continuar con tus revisiones.</p>
+        <a className="primary-button" href="/"><ArrowLeft size={16} /> Volver a revisiones</a>
+      </div>
+    </section>
+    <footer className="not-found-footer"><span>CodeXPT</span><span>Cuaderno de revisión</span></footer>
+  </main>
 }
 
 function Login() {
@@ -186,8 +217,11 @@ function InviteAcceptance() {
 }
 
 function Dashboard() {
+  const [initializing, setInitializing] = useState(true)
   const [tasks, setTasks] = useState<Task[]>([])
   const [selected, setSelected] = useState<string | null>(null)
+  const selectedRef = useRef<string | null>(null)
+  const [openingTask, setOpeningTask] = useState<string | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
   const [checkpointFormOpen, setCheckpointFormOpen] = useState(false)
@@ -250,15 +284,18 @@ function Dashboard() {
   const loadTasks = useCallback(async (preferred?: string) => {
     const rows = await api<Task[]>('/api/tasks')
     setTasks(rows)
-    const id = preferred ?? selected ?? rows[0]?.task_id ?? null
+    const id = preferred ?? selectedRef.current ?? rows[0]?.task_id ?? null
+    selectedRef.current = id
     setSelected(id)
     if (id) await loadDetail(id); else setDetail(null)
-  }, [loadDetail, selected])
+  }, [loadDetail])
   // oxlint-disable-next-line react/set-state-in-effect -- surface an asynchronous initial-load failure.
   useEffect(() => {
     let active = true
-    api<{ configured: boolean }>('/api/auth/status')
-      .then(async ({ configured }) => {
+    const initialize = async () => {
+      try {
+        const { configured } = await api<{ configured: boolean }>('/api/auth/status')
+        if (!active) return
         if (configured) {
           try {
             const session = await api<{ csrf_token: string; email?: string }>('/api/auth/me')
@@ -275,9 +312,14 @@ function Dashboard() {
           catch { if (active) window.location.replace('/login'); return }
         }
         else if (active) setHosted(false)
-        if (active) loadTasks().catch((e: unknown) => setError(e instanceof Error ? e.message : 'No se pudo cargar el espacio.'))
-      })
-      .catch((e: unknown) => { if (active) setError(e instanceof Error ? e.message : 'No se pudo cargar el espacio.') })
+        if (active) await loadTasks()
+      } catch (e) {
+        if (active) setError(e instanceof Error ? e.message : 'No se pudo cargar el espacio.')
+      } finally {
+        if (active) setInitializing(false)
+      }
+    }
+    void initialize()
     return () => { active = false }
   }, [loadTasks])
   const filtered = useMemo(() => tasks.filter((task) => {
@@ -445,6 +487,22 @@ function Dashboard() {
     target?.focus({ preventScroll: true })
   }
   const mobileActionLabel = detail?.pending_decision ? 'Responder decisión' : detail?.task.status === 'approved' ? 'Añadir comentario' : 'Responder'
+  const openTask = async (id: string) => {
+    if (id === selectedRef.current || openingTask) return
+    setOpeningTask(id)
+    setError('')
+    try {
+      await loadDetail(id)
+      selectedRef.current = id
+      setSelected(id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo abrir la revisión.')
+    } finally {
+      setOpeningTask(null)
+    }
+  }
+
+  if (initializing) return <StartupSplash />
 
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Navegación de tareas">
@@ -458,17 +516,17 @@ function Dashboard() {
         <div className="filter-tabs" role="group" aria-label="Filtrar revisiones"><button type="button" aria-pressed={filter === 'all'} className={filter === 'all' ? 'selected' : ''} onClick={() => setFilter('all')}>Todas</button><button type="button" aria-pressed={filter === 'pending'} className={filter === 'pending' ? 'selected' : ''} onClick={() => setFilter('pending')}>Pendientes</button><button type="button" aria-pressed={filter === 'approved'} className={filter === 'approved' ? 'selected' : ''} onClick={() => setFilter('approved')}>Aprobadas</button></div>
       </div>
       <nav className="task-list" aria-label="Lista de revisiones">
-        {filtered.map((task) => <button key={task.task_id} type="button" className={`task-row ${task.task_id === selected ? 'active' : ''}`} onClick={() => { setSelected(task.task_id); loadDetail(task.task_id).catch((e: Error) => setError(e.message)) }}><span className={`status-marker ${task.status}`} aria-hidden="true" /><span className="task-row-copy"><strong>{task.title}</strong><small>{task.pending_decision ? 'Decisión pendiente' : labels[task.status]}</small></span>{task.pending_decision && <span className="pending-mark" aria-label="Decisión pendiente">!</span>}</button>)}
+        {filtered.map((task) => <button key={task.task_id} type="button" className={`task-row ${task.task_id === selected ? 'active' : ''} ${task.task_id === openingTask ? 'opening' : ''}`} aria-busy={task.task_id === openingTask || undefined} disabled={Boolean(openingTask)} onClick={() => void openTask(task.task_id)}><span className={`status-marker ${task.status}`} aria-hidden="true" /><span className="task-row-copy"><strong>{task.title}</strong><small>{task.task_id === openingTask ? 'Abriendo revisión…' : task.pending_decision ? 'Decisión pendiente' : labels[task.status]}</small></span>{task.pending_decision && <span className="pending-mark" aria-label="Decisión pendiente">!</span>}</button>)}
         {!filtered.length && <p className="empty-list">{tasks.length ? 'No hay revisiones con ese filtro.' : 'Aquí aparecerán tus revisiones.'}</p>}
       </nav>
       <div className="sidebar-foot"><div className="security-note"><ShieldCheck size={16} /><span>{hosted ? 'Sesión privada' : 'Solo en este equipo'}<br /><small>{hosted ? 'Acceso por invitación' : 'Servidor en loopback'}</small></span></div><div className="profile-row"><span className="avatar">{hosted ? (profileEmail[0]?.toUpperCase() ?? 'U') : 'C'}</span><span><strong>{hosted ? (profileEmail || 'Usuario') : 'César'}</strong><small>{hosted ? workspaceRole : 'Director técnico'}</small></span>{hosted ? <button className="icon-button logout-button" type="button" aria-label="Cerrar sesión" onClick={() => { void api('/api/auth/logout', { method: 'POST' }).finally(() => { activeCsrfToken = null; activeWorkspaceId = null; window.location.replace('/login') }) }}><LogOut size={14} /></button> : <ChevronDown size={15} />}</div></div>
     </aside>
 
     <main className="workspace" id="inicio">
-      <header className="topbar"><div className="breadcrumbs"><span>CodeXPT</span><span className="crumb-sep">/</span><strong>{detail?.task.title ?? 'Revisiones'}</strong></div><div className="top-actions"><span className="connection"><span className="local-dot" /> {hosted ? 'Privado' : 'Local'}</span>{canCollaborate && detail && <button className="primary-button mobile-composer-action" type="button" onClick={focusNextAction}><Send size={14} /> {mobileActionLabel}</button>}{hosted && workspaceRole === 'OWNER' && <button className="quiet-button" type="button" aria-label="Miembros" onClick={() => void openMembers()}><Users size={15} /><span>Miembros</span></button>}</div></header>
+      <header className="topbar"><div className="breadcrumbs"><span>CodeXPT</span><span className="crumb-sep">/</span><strong>{openingTask ? 'Abriendo revisión…' : detail?.task.title ?? 'Revisiones'}</strong></div><div className="top-actions"><span className="connection"><span className="local-dot" /> {hosted ? 'Privado' : 'Local'}</span>{canCollaborate && detail && <button className="primary-button mobile-composer-action" type="button" onClick={focusNextAction}><Send size={14} /> {mobileActionLabel}</button>}{hosted && workspaceRole === 'OWNER' && <button className="quiet-button" type="button" aria-label="Miembros" onClick={() => void openMembers()}><Users size={15} /><span>Miembros</span></button>}</div></header>
       <p className="sr-only" role="status" aria-live="polite">{statusMessage}</p>
       {error && <div className="error-banner" role="alert"><ShieldAlert size={17} /><span>{error}</span><button type="button" aria-label="Cerrar error" onClick={() => setError('')}>×</button></div>}
-      {error.startsWith('Tu acceso ya está verificado.') ? <section className="first-run"><div className="first-run-mark"><BrandMark /></div><h1>Tu workspace aún no está listo.</h1><p>{error}</p><a className="primary-button" href="/invite">Aceptar invitación</a><button type="button" className="quiet-button" onClick={() => { void api('/api/auth/logout', { method: 'POST' }).finally(() => { activeCsrfToken = null; activeWorkspaceId = null; window.location.replace('/login') }) }}>Cerrar sesión</button></section> : detail ? <>
+      {error.startsWith('Tu acceso ya está verificado.') ? <section className="first-run"><div className="first-run-mark"><BrandMark /></div><h1>Tu workspace aún no está listo.</h1><p>{error}</p><a className="primary-button" href="/invite">Aceptar invitación</a><button type="button" className="quiet-button" onClick={() => { void api('/api/auth/logout', { method: 'POST' }).finally(() => { activeCsrfToken = null; activeWorkspaceId = null; window.location.replace('/login') }) }}>Cerrar sesión</button></section> : detail ? <div key={detail.task.task_id} className="review-screen">
         <section className="review-heading"><div className="heading-main"><div className="eyebrow"><FileText size={14} /> Registro de revisión <span>/{detail.task.task_id.slice(0, 8)}</span></div><h1>{detail.task.title}</h1><p>{detail.task.description || 'Sin descripción. Añade contexto a través de la conversación.'}</p></div><span className={`status-pill ${detail.task.status}`}><span className="status-dot" />{labels[detail.task.status]}</span></section>
         {detail.pending_decision && <section className="decision-banner" aria-labelledby="decision-title"><div className="decision-icon"><CircleDot size={20} /></div><div className="decision-question"><span id="decision-title">Tu decisión es necesaria</span><p>{detail.pending_decision.question}</p><small>Solicitada por {detail.pending_decision.requested_by} · {date(detail.pending_decision.created_at)}</small></div>{canCollaborate ? <form className="decision-answer" onSubmit={answerHuman}><label className="sr-only" htmlFor="decision-answer">Tu respuesta</label><input ref={decisionAnswerRef} id="decision-answer" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Escribe una respuesta" required /><button className="primary-button" type="submit" disabled={busy || !answer.trim()}>Enviar respuesta</button></form> : <p className="read-only-note">Tu rol permite consultar esta decisión, pero no responderla.</p>}</section>}
         <div className="work-grid">
@@ -515,7 +573,7 @@ function Dashboard() {
             <section className="rail-section details-section"><div className="rail-label">Anotaciones</div><dl><div><dt>Creada</dt><dd>{date(detail.task.created_at)}</dd></div><div><dt>Actualizada</dt><dd>{date(detail.task.updated_at)}</dd></div><div><dt>Eventos</dt><dd>{detail.events.length} registrados</dd></div></dl></section>
           </aside>
         </div>
-      </> : <section className="first-run"><div className="first-run-mark"><BrandMark /></div><h1>El espacio está listo.</h1><p>{canCollaborate ? 'Crea una revisión para registrar propuestas, respuestas y decisiones humanas en un historial local.' : 'Tu rol permite consultar el workspace. Pide a un Owner que te habilite para registrar revisiones.'}</p>{canCollaborate && <button type="button" className="primary-button" onClick={() => setDialog(true)}><Plus size={16} /> Crear revisión</button>}<div className="first-run-foot"><ShieldCheck size={15} /> {hosted ? 'Acceso privado por workspace.' : 'Los datos se guardan en este equipo.'}</div></section>}
+      </div> : <section className="first-run"><div className="first-run-mark"><BrandMark /></div><h1>El espacio está listo.</h1><p>{canCollaborate ? 'Crea una revisión para registrar propuestas, respuestas y decisiones humanas en un historial local.' : 'Tu rol permite consultar el workspace. Pide a un Owner que te habilite para registrar revisiones.'}</p>{canCollaborate && <button type="button" className="primary-button" onClick={() => setDialog(true)}><Plus size={16} /> Crear revisión</button>}<div className="first-run-foot"><ShieldCheck size={15} /> {hosted ? 'Acceso privado por workspace.' : 'Los datos se guardan en este equipo.'}</div></section>}
     </main>
 
     {dialog && <div className="dialog-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDialog(false) }}><section ref={newTaskDialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="new-task-title"><div className="dialog-head"><div><span className="eyebrow">Nuevo registro</span><h2 id="new-task-title">Crear revisión</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={() => setDialog(false)}>×</button></div><form onSubmit={createTask}><label htmlFor="new-title">Título</label><input id="new-title" name="title" data-dialog-initial-focus required maxLength={160} placeholder="Ej. Evaluar diseño de autenticación" /><label htmlFor="new-description">Contexto <span>opcional</span></label><textarea id="new-description" name="description" maxLength={4000} rows={4} placeholder="Objetivo, alcance y criterios de revisión" /><div className="dialog-actions"><button type="button" className="quiet-button" onClick={() => setDialog(false)}>Cancelar</button><button type="submit" className="primary-button" disabled={busy}><Plus size={15} /> Crear revisión</button></div></form></section></div>}
@@ -524,9 +582,11 @@ function Dashboard() {
 }
 
 function App() {
-  if (window.location.pathname === '/login') return <Login />
-  if (window.location.pathname === '/invite') return <InviteAcceptance />
-  return <Dashboard />
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/'
+  if (pathname === '/login') return <Login />
+  if (pathname === '/invite') return <InviteAcceptance />
+  if (pathname === '/') return <Dashboard />
+  return <NotFound />
 }
 
 export default App
