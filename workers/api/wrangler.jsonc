@@ -1,0 +1,26 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "codexpt-api",
+	"account_id": "c5a870057a15e38d38f5e7d7c2a5972c",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-10-11",
+	"workers_dev": true,
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "codexpt-production",
+			"database_id": "e2f9c9ef-23c7-49b3-bff5-51bfaa20516d"
+		}
+	],
+	"vars": {
+		"API_HOST": "codexpt-api.replace-with-account-subdomain.workers.dev",
+		"WEB_ORIGIN": "https://codexpt.vercel.app",
+		"OIDC_ISSUER": "",
+		"OIDC_CLIENT_ID": "",
+		"OIDC_REDIRECT_URI": "https://codexpt.vercel.app/api/auth/callback",
+		"LOGIN_SUCCESS_URL": "https://codexpt.vercel.app/"
+	}
+}

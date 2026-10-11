@@ -14,8 +14,8 @@ class MockResponse {
 }
 
 const configured = {
-  CODEXPT_RAILWAY_ORIGIN: 'https://codexpt-production.up.railway.app',
-  CODEXPT_RAILWAY_HOST: 'codexpt-production.up.railway.app',
+  CODEXPT_CLOUDFLARE_ORIGIN: 'https://codexpt-api.codexpt.workers.dev',
+  CODEXPT_CLOUDFLARE_HOST: 'codexpt-api.codexpt.workers.dev',
   CODEXPT_PROXY_SECRET: 'test-secret-0123456789-0123456789-abcdef',
 }
 
@@ -63,7 +63,7 @@ test('proxy forwards same-origin OIDC callback without following redirects or lo
     },
   })
 
-  assert.equal(called.url, 'https://codexpt-production.up.railway.app/api/auth/callback?code=opaque&state=opaque-state')
+  assert.equal(called.url, 'https://codexpt-api.codexpt.workers.dev/api/auth/callback?code=opaque&state=opaque-state')
   assert.equal(called.options.redirect, 'manual')
   assert.equal(called.options.headers.get('cookie'), '__Host-codexpt_oidc=state-cookie')
   assert.equal(called.options.headers.get('x-codexpt-proxy-key'), configured.CODEXPT_PROXY_SECRET)
@@ -101,7 +101,7 @@ test('proxy forwards CSRF and workspace headers but strips client host and proxy
     },
   })
 
-  assert.equal(called.url, 'https://codexpt-production.up.railway.app/api/tasks?limit=10')
+  assert.equal(called.url, 'https://codexpt-api.codexpt.workers.dev/api/tasks?limit=10')
   assert.equal(called.options.headers.get('origin'), 'https://codexpt.jappi.net.pe')
   assert.equal(called.options.headers.get('x-csrf-token'), 'csrf')
   assert.equal(called.options.headers.get('x-codexpt-workspace-id'), 'workspace-1')
@@ -114,11 +114,11 @@ test('proxy forwards CSRF and workspace headers but strips client host and proxy
 test('proxy rejects missing configuration, unsafe origins, methods and oversized bodies', async () => {
   const cases = [
     { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: {} , status: 503 },
-    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_RAILWAY_ORIGIN: 'https://evil.example' }, status: 503 },
-    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_RAILWAY_ORIGIN: `${configured.CODEXPT_RAILWAY_ORIGIN}/api` }, status: 503 },
-    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_RAILWAY_ORIGIN: `${configured.CODEXPT_RAILWAY_ORIGIN}:443` }, status: 503 },
-    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_RAILWAY_HOST: 'other-service.up.railway.app' }, status: 503 },
-    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_RAILWAY_ORIGIN: 'https://other-service.up.railway.app' }, status: 503 },
+    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_CLOUDFLARE_ORIGIN: 'https://evil.example' }, status: 503 },
+    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_CLOUDFLARE_ORIGIN: `${configured.CODEXPT_CLOUDFLARE_ORIGIN}/api` }, status: 503 },
+    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_CLOUDFLARE_ORIGIN: `${configured.CODEXPT_CLOUDFLARE_ORIGIN}:443` }, status: 503 },
+    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_CLOUDFLARE_HOST: 'other-service.account.workers.dev' }, status: 503 },
+    { req: { method: 'GET', url: '/api/auth/status', headers: {} }, env: { ...configured, CODEXPT_CLOUDFLARE_ORIGIN: 'https://other-service.up.railway.app' }, status: 503 },
     { req: { method: 'PUT', url: '/api/tasks/1', headers: {} }, env: configured, status: 405 },
     { req: { method: 'POST', url: '/api/tasks', headers: { 'content-length': String(32 * 1024 + 1) }, body: 'x'.repeat(32 * 1024 + 1) }, env: configured, status: 413 },
   ]
@@ -205,7 +205,7 @@ test('Vercel API entrypoint preserves nested API paths and original query parame
       },
     },
   )
-  assert.equal(forwardedUrl, 'https://codexpt-production.up.railway.app/api/auth/status?source=login')
+  assert.equal(forwardedUrl, 'https://codexpt-api.codexpt.workers.dev/api/auth/status?source=login')
   assert.equal(res.statusCode, 200)
   assert.equal(res.body.toString(), '{"configured":false}')
 })

@@ -48,12 +48,13 @@ Para desarrollo del frontend, instala Node.js y ejecuta `npm --prefix web ci` y 
 
 ## Estado y próximos hitos
 
-El protocolo local, la persistencia, la CLI y el dashboard tienen cobertura automatizada. El contenedor se compiló y pasó un smoke local reproducible. La siguiente etapa de hosting es una migración candidata a Cloudflare Workers + SQLite Durable Objects, no un despliegue aprobado: el spike local solo valida transacciones de checkpoints; identidad, recuperación, DNS y E2E hospedado siguen pendientes. La colaboración directa entre agentes sigue fuera del alcance actual.
+El MVP local tiene cobertura automatizada. La evaluación de hosting seleccionó Cloudflare Workers + D1 para el backend con objetivo de mantener los cargos de plataforma por debajo de US$1/mes. La base D1 y el esquema inicial ya existen; el Worker aún no está desplegado y el producto no está operativo de punta a punta. Faltan el host frontend definitivo, el cliente OIDC dedicado, los secretos de proxy, el Owner inicial y las pruebas hospedadas.
 
 - [Validación y límites conocidos](docs/VALIDATION-REPORT.md)
 - [Hoja de ruta](ROADMAP.md)
 - [Experimento y métricas](EXPERIMENT.md)
 - [Plan de hosting y costos](docs/deployment/PLAN.md)
+- [Decisión de backend Cloudflare Workers + D1](docs/adr/0016-cloudflare-workers-d1-backend.md)
 - [Spike local de SQLite Durable Objects](spikes/cloudflare-do/README.md) · validación limitada, sin recursos cloud.
 
 ## Documentación

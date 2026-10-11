@@ -1,0 +1,7 @@
+account_id               = "c5a870057a15e38d38f5e7d7c2a5972c"
+workers_dev_subdomain    = "replace-with-workers-dev-subdomain"
+worker_bundle_path       = "../../workers/api/.wrangler/deploy/worker.js"
+web_origin               = "https://codexpt.vercel.app"
+oidc_issuer              = ""
+oidc_client_id           = ""
+production_release_ready = false

@@ -59,7 +59,7 @@ function configuredBackendOrigin(value, expectedHostname) {
       origin.pathname !== '/' ||
       origin.search ||
       origin.hash ||
-      !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.up\.railway\.app$/.test(origin.hostname)
+      !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.workers\.dev$/.test(origin.hostname)
     ) return null
     return origin
   } catch {
@@ -113,8 +113,8 @@ export async function proxyHandler(req, res, dependencies = {}) {
   const env = dependencies.env ?? process.env
   const fetchImpl = dependencies.fetchImpl ?? fetch
   const backendOrigin = configuredBackendOrigin(
-    env.CODEXPT_RAILWAY_ORIGIN,
-    env.CODEXPT_RAILWAY_HOST,
+    env.CODEXPT_CLOUDFLARE_ORIGIN,
+    env.CODEXPT_CLOUDFLARE_HOST,
   )
   const proxySecret = env.CODEXPT_PROXY_SECRET
 

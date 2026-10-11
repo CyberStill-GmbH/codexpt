@@ -1,11 +1,12 @@
 # CodeXPT hosting and deployment plan
 
-**Status (2026-10-11): static frontend deployed to
-[codexpt.vercel.app](https://codexpt.vercel.app); backend is not deployed and
-the product is not functional end to end.** Live checks return `503 API proxy
-is not configured` for `/api/health` and `/api/auth/status`; the Vercel project
-has no production environment variables. Static WebP illustrations now return
-`image/webp` from the Vercel hostname. The custom alias
+**Status (2026-10-11): frontend is deployed to
+[codexpt.vercel.app](https://codexpt.vercel.app), but the product is not
+functional end to end. `/api/health` and `/api/auth/status` return 503 because
+the Vercel project has no production environment variables. A dedicated
+Cloudflare D1 database was provisioned in WNAM and its initial schema migration
+applied; the Worker has not been deployed. The OIDC app, frontend host, proxy
+secret, bootstrap owner and hosted E2E remain outstanding. The custom alias
 `codexpt.jappi.net.pe` remains blocked by DNS (`SERVFAIL`/lookup failure).
 
 A Railway project and `codexpt-api` service scaffold now exist from a prior
@@ -16,19 +17,19 @@ AWS SSO currently authenticates as the QAPAQ-specific
 `QapaqDemoDeploy` role in account `955200662475`; Route 53 has no visible hosted
 zone. Repository identity rules prohibit using QAPAQ pools, clients, credentials,
 users, or data for CodeXPT, and the role is not a dedicated CodeXPT identity.
-The Cloudflare account has no visible Workers & Pages project, Durable Object,
-or `jappi.net.pe` zone. The local SQLite Durable Object spike passes its storage
-tests, but is not a production backend. No parent-zone DNS record or nameserver
+The Cloudflare account now has a D1 database, but no CodeXPT Worker deployment,
+Pages project, or `jappi.net.pe` zone. No parent-zone DNS record or nameserver
 delegation has been changed.
 
 ## Current decision
 
-Follow [ADR-0015](../adr/0015-cloudflare-workers-durable-objects-hosting-spike.md)
-for the release investigation. The candidate is a Cloudflare Worker serving
-the static frontend and API, with SQLite-backed Durable Objects for durable
-state. This requires a TypeScript adapter; the current Rust/Axum application
-cannot be deployed there unchanged. The local spike validates only checkpoint
-transactions and is not sufficient to approve a migration.
+Follow [ADR-0016](../adr/0016-cloudflare-workers-d1-backend.md): Cloudflare
+Workers + D1 is the selected beta backend under the sub-dollar target. The
+Rust/Axum implementation remains the existing reference backend; Cloudflare
+requires a separately maintained TypeScript adapter. The adapter passes local
+type checks, 14 Worker/D1 tests, 10 frontend proxy tests, a bundle dry-run and
+Terraform validation. These checks do not establish hosted production
+readiness.
 
 - **AWS EC2 is out:** the existing Terraform creates an always-on instance,
   public IPv4, and EBS volume; the documented baseline is about US$17.51/month
@@ -37,14 +38,14 @@ transactions and is not sufficient to approve a migration.
   US$5 included usage, while the authenticated dashboard showed aggregate
   workspace use above the included amount. A global limit could stop unrelated
   services.
-- **Vercel is not the production target for this product:** Vercel Hobby
-  eligibility is limited to personal/non-commercial use, and the current
-  Vercel API proxy design incurs function usage. The existing protected preview
-  is useful for UI review but is not a production API.
-- **Cloudflare Free is only a candidate:** current documented quotas are
-  account-wide. At quota limits, operations fail closed until reset, so cost
-  control has an availability tradeoff. Keep every required component on the
-  Free plan if proceeding; a paid feature would require a new cost decision.
+- **Vercel is a temporary frontend host:** the static UI is live, but the API
+  proxy is not configured. The product owner is deciding whether to move the
+  public frontend to Cloudflare Pages; this determines the exact OIDC origin
+  and callback. Vercel Hobby is limited to personal/non-commercial use.
+- **Cloudflare Free is the target, not a measured invoice:** quotas are
+  account-wide and requests can fail when quotas are exceeded. Keep required
+  services on Free to target US$0 platform charges; verify live account usage
+  and quota handling before launch.
 - **Cloudflare Containers are out for this cap:** Containers require the
   US$5/month Workers Paid minimum, may bill for resource use above included
   allowances, and their filesystem is ephemeral by default. They do not retain
@@ -52,11 +53,10 @@ transactions and is not sufficient to approve a migration.
   [Containers pricing](https://developers.cloudflare.com/containers/platform/pricing/)
   and [disk persistence notes](https://developers.cloudflare.com/containers/faq/).
 
-The product hosting ceiling is **US$5/month**, excluding the already registered
-domain renewal. A no-charge Cloudflare Free deployment is plausible at the beta
-envelope, not yet measured for the complete app. Do not treat it as guaranteed
-availability or a provider-enforced dollar cap across unrelated paid products.
-See ADR-0015 for quotas, assumptions, and gates.
+The product hosting ceiling is **US$1/month**, excluding domain renewal. A
+Cloudflare Free deployment targets US$0 in platform fees at MVP traffic, but is
+not a guaranteed cap across other paid products or account usage. See ADR-0016
+for quotas, assumptions, and release gates.
 
 ## DNS and hostname
 
@@ -97,7 +97,7 @@ decision after the complete record set and rollback are ready.
 
 | Provider | Current observation | Deployment consequence |
 |---|---|---|
-| Cloudflare | Account dashboard is authenticated; no `jappi.net.pe` zone, no Workers & Pages project, and dashboard showed zero Worker requests for Oct 1–11. | Candidate can be tested without disturbing visible Cloudflare projects; custom host still requires verified DNS authority and zone setup. |
+| Cloudflare | Wrangler OAuth is authenticated to the user's separate account. D1 `codexpt-production` is provisioned in WNAM; migration `0001_initial.sql` is applied. No Worker or Pages app is deployed, and no `jappi.net.pe` zone is present. | Keep using generated staging hostnames; Terraform must import the existing D1 after a scoped API token is configured. Custom host remains blocked on safe DNS ownership and record inventory. |
 | AWS | SSO authenticates as QAPAQ's `QapaqDemoDeploy` role in account `955200662475`; no visible Route 53 hosted zone. This is not a dedicated CodeXPT deployment identity. | Do not apply CodeXPT infrastructure with the QAPAQ role or run the EC2 Terraform root; it violates the identity boundary and US$5 ceiling. |
 | Railway | A `codexpt` project and `codexpt-api` service scaffold exist, with generated hostname but no source/image, deployment, volume, or replica. Workspace usage was previously observed above the Hobby included credit. | This scaffold is not a running backend. Do not deploy into or alter workspace-wide limits until incremental costs and impact on existing projects are resolved. |
 | Vercel | Production static frontend is Ready at `codexpt.vercel.app`; images and CSS serve with correct MIME types. `/api/health` and `/api/auth/status` return 503 because no proxy configuration exists; production env list is empty. Custom hostname DNS is invalid. | The static site is live, not the complete product. Do not claim backend or hosted identity readiness. |
@@ -163,7 +163,8 @@ not prove hosted production authentication. Do not run `terraform apply` or
 
 ## Relevant decisions
 
-- [ADR-0015: Cloudflare Workers + SQLite Durable Objects candidate](../adr/0015-cloudflare-workers-durable-objects-hosting-spike.md)
+- [ADR-0016: Cloudflare Workers + D1 beta backend](../adr/0016-cloudflare-workers-d1-backend.md)
+- [ADR-0015: Cloudflare Workers + SQLite Durable Objects historical candidate](../adr/0015-cloudflare-workers-durable-objects-hosting-spike.md)
 - [ADR-0014: verified context checkpoint handoff](../adr/0014-verified-context-checkpoint-handoff.md)
 - [ADR-0013: Vercel + Railway proxy proposal, superseded for launch planning](../adr/0013-vercel-railway-split-hosting.md)
 - [ADR-0007: original Workers/D1 spike](../adr/0007-workers-d1-hosting-spike.md)
