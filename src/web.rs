@@ -3261,7 +3261,8 @@ mod tests {
 
     #[tokio::test]
     async fn hosted_origin_csrf_and_session_provenance_are_bound_to_exact_domains() {
-        let path = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+        let database_dir = tempfile::tempdir().unwrap();
+        let path = database_dir.path().join("hosted-identity.sqlite3");
         let identity = IdentityStore::connect_sqlite(&path, 2).await.unwrap();
         let (owner_id, workspace) = identity
             .bootstrap_first_owner(
