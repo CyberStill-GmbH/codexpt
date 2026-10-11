@@ -20,8 +20,9 @@ use crate::identity::{
     derive_csrf_token, oidc, oidc::cookie_value,
 };
 use crate::{
-    AppError, EvidenceRef, HumanDecision, Message, MessageStatus, Store, Task, TaskEvent,
-    TaskStatus, domain::MESSAGE_SCHEMA_VERSION,
+    AppError, CheckpointArtifact, CheckpointContent, ContextCheckpoint, EvidenceRef, HumanDecision,
+    Message, MessageStatus, Store, Task, TaskEvent, TaskStatus,
+    domain::{CONTEXT_CHECKPOINT_SCHEMA, CONTEXT_CHECKPOINT_VERSION, MESSAGE_SCHEMA_VERSION},
 };
 
 const MAX_REQUEST_BYTES: usize = 32 * 1024;
@@ -107,6 +108,20 @@ struct TransferOwnershipRequest {
 #[derive(Debug, Deserialize)]
 struct AnswerDecisionRequest {
     answer: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateContextCheckpointRequest {
+    checkpoint_id: String,
+    source: String,
+    goal: String,
+    decisions: String,
+    completed: String,
+    blocked: String,
+    next_actions: String,
+    constraints: String,
+    #[serde(default)]
+    artifacts: Vec<CheckpointArtifact>,
 }
 
 #[derive(Debug, Serialize)]
@@ -444,6 +459,14 @@ fn router_with_identity_and_origins(
         .route("/api/invites/accept", post(accept_workspace_invite))
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/{task_id}", get(get_task))
+        .route(
+            "/api/tasks/{task_id}/checkpoints",
+            get(list_context_checkpoints).post(create_context_checkpoint),
+        )
+        .route(
+            "/api/tasks/{task_id}/checkpoints/{checkpoint_id}/resume",
+            post(acknowledge_context_checkpoint),
+        )
         .route("/api/tasks/{task_id}/messages", post(create_message))
         .route("/api/tasks/{task_id}/transition", post(transition_task))
         .route("/api/tasks/{task_id}/decisions", post(request_decision))
@@ -1018,6 +1041,72 @@ async fn get_task(
     })
     .await?;
     Ok(Json(detail))
+}
+
+async fn list_context_checkpoints(
+    State(state): State<AppState>,
+    Extension(context): Extension<RequestContext>,
+    Path(task_id): Path<String>,
+) -> Result<Json<Vec<ContextCheckpoint>>, ApiError> {
+    let checkpoints = with_store(state, context.workspace_id, move |store| {
+        store.list_context_checkpoints(&task_id)
+    })
+    .await?;
+    Ok(Json(checkpoints))
+}
+
+async fn create_context_checkpoint(
+    State(state): State<AppState>,
+    Extension(context): Extension<RequestContext>,
+    Path(task_id): Path<String>,
+    Json(input): Json<CreateContextCheckpointRequest>,
+) -> Result<(StatusCode, Json<MutationResult<ContextCheckpoint>>), ApiError> {
+    let actor = context
+        .principal
+        .as_ref()
+        .map(|principal| format!("human:{}", principal.user_id))
+        .unwrap_or_else(|| "human:cesar".into());
+    let content = CheckpointContent {
+        schema: CONTEXT_CHECKPOINT_SCHEMA.into(),
+        version: CONTEXT_CHECKPOINT_VERSION.into(),
+        checkpoint_id: input.checkpoint_id,
+        task_id: task_id.clone(),
+        source: input.source,
+        source_completeness: "user_curated_partial".into(),
+        goal: input.goal,
+        decisions: input.decisions,
+        completed: input.completed,
+        blocked: input.blocked,
+        next_actions: input.next_actions,
+        constraints: input.constraints,
+        artifacts: input.artifacts,
+        context_capacity: "unknown; no ChatGPT web context telemetry is available".into(),
+    };
+    let checkpoint = with_store(state, context.workspace_id, move |store| {
+        store.create_context_checkpoint(content, &actor)
+    })
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(MutationResult { data: checkpoint }),
+    ))
+}
+
+async fn acknowledge_context_checkpoint(
+    State(state): State<AppState>,
+    Extension(context): Extension<RequestContext>,
+    Path((task_id, checkpoint_id)): Path<(String, String)>,
+) -> Result<Json<MutationResult<ContextCheckpoint>>, ApiError> {
+    let actor = context
+        .principal
+        .as_ref()
+        .map(|principal| format!("human:{}", principal.user_id))
+        .unwrap_or_else(|| "human:cesar".into());
+    let checkpoint = with_store(state, context.workspace_id, move |store| {
+        store.acknowledge_context_checkpoint(&task_id, &checkpoint_id, &actor)
+    })
+    .await?;
+    Ok(Json(MutationResult { data: checkpoint }))
 }
 
 async fn create_task(
@@ -2136,6 +2225,18 @@ mod tests {
             ),
             (
                 Method::POST,
+                &format!("/api/tasks/{task_id}/checkpoints"),
+                r#"{"checkpoint_id":"6fb8907e-7f4a-427c-835b-d4d39c833ffe","source":"unknown","goal":"Forbidden"}"#,
+            ),
+            (
+                Method::POST,
+                &format!(
+                    "/api/tasks/{task_id}/checkpoints/6fb8907e-7f4a-427c-835b-d4d39c833ffe/resume"
+                ),
+                "{}",
+            ),
+            (
+                Method::POST,
                 &format!("/api/workspaces/{workspace_id}/invites"),
                 r#"{"email":"blocked@example.test","role":"EDITOR"}"#,
             ),
@@ -2185,6 +2286,7 @@ mod tests {
         assert_eq!(tasks[0].status, TaskStatus::Open);
         assert!(scoped.list_messages(task_id).unwrap().is_empty());
         assert!(scoped.get_pending_decision(task_id).unwrap().is_none());
+        assert!(scoped.list_context_checkpoints(task_id).unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2444,6 +2546,107 @@ mod tests {
         assert_eq!(
             persisted.get_task(&task_id).unwrap().unwrap().title,
             "Review API"
+        );
+    }
+
+    #[tokio::test]
+    async fn context_checkpoint_api_freezes_exports_and_acknowledges_explicit_handoff() {
+        let (app, path) = app();
+        let created = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/tasks",
+                r#"{"title":"Continuity","description":"Synthetic context handoff"}"#,
+            ))
+            .await
+            .unwrap();
+        let created: serde_json::Value = serde_json::from_slice(
+            &to_bytes(created.into_body(), MAX_REQUEST_BYTES)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let task_id = created["data"]["task_id"].as_str().unwrap();
+        let checkpoint_id = "6fb8907e-7f4a-427c-835b-d4d39c833ffe";
+        let payload = serde_json::json!({
+            "checkpoint_id": checkpoint_id,
+            "source": "chatgpt_web",
+            "goal": "Continue this synthetic review",
+            "decisions": "No secrets in handoff",
+            "completed": "The local API is implemented",
+            "blocked": "Hosted deployment is not configured",
+            "next_actions": "Verify the integration",
+            "constraints": "Keep context capacity unknown",
+            "artifacts": [{"label":"current commit","locator":"95aec3c"}]
+        });
+        let uri = format!("/api/tasks/{task_id}/checkpoints");
+        let response = app
+            .clone()
+            .oneshot(request(Method::POST, &uri, &payload.to_string()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let created: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), MAX_REQUEST_BYTES)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(created["data"]["status"], "ready");
+        assert_eq!(
+            created["data"]["content"]["context_capacity"],
+            "unknown; no ChatGPT web context telemetry is available"
+        );
+        assert_eq!(
+            created["data"]["content"]["source_completeness"],
+            "user_curated_partial"
+        );
+
+        let response = app
+            .clone()
+            .oneshot(request(Method::GET, &uri, ""))
+            .await
+            .unwrap();
+        let checkpoints: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), MAX_REQUEST_BYTES)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(checkpoints.as_array().unwrap().len(), 1);
+
+        let resume_uri = format!("/api/tasks/{task_id}/checkpoints/{checkpoint_id}/resume");
+        let response = app
+            .clone()
+            .oneshot(request(Method::POST, &resume_uri, "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let resumed: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), MAX_REQUEST_BYTES)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(resumed["data"]["status"], "resumed");
+        let response = app
+            .oneshot(request(Method::POST, &resume_uri, "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let store = Store::open(path).unwrap();
+        assert_eq!(store.list_context_checkpoints(task_id).unwrap().len(), 1);
+        let events = store.list_events(task_id).unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "context_checkpoint_ready")
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "context_checkpoint_resumed")
         );
     }
 

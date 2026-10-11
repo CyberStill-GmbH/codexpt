@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const MESSAGE_SCHEMA_VERSION: u16 = 1;
+pub const CONTEXT_CHECKPOINT_SCHEMA: &str = "codexpt.context-checkpoint";
+pub const CONTEXT_CHECKPOINT_VERSION: &str = "1.0.0";
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -213,4 +215,39 @@ pub struct HumanDecision {
     pub requested_by: String,
     pub status: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointArtifact {
+    pub label: String,
+    pub locator: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointContent {
+    pub schema: String,
+    pub version: String,
+    pub checkpoint_id: String,
+    pub task_id: String,
+    pub source: String,
+    pub source_completeness: String,
+    pub goal: String,
+    pub decisions: String,
+    pub completed: String,
+    pub blocked: String,
+    pub next_actions: String,
+    pub constraints: String,
+    pub artifacts: Vec<CheckpointArtifact>,
+    pub context_capacity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextCheckpoint {
+    pub content: CheckpointContent,
+    pub content_sha256: String,
+    pub status: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub resumed_by: Option<String>,
+    pub resumed_at: Option<String>,
 }

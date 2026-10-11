@@ -10,6 +10,7 @@ type Message = { message_id: string; sender: string; recipient: string; body: st
 type Entry = { sequence: number; event_type: string; actor: string; occurred_at: string; details: Record<string, unknown> }
 type Decision = { decision_id: string; question: string; requested_by: string; created_at: string }
 type Detail = { task: Task; messages: Message[]; events: Entry[]; pending_decision: Decision | null }
+type Checkpoint = { content: { schema: string; version: string; checkpoint_id: string; task_id: string; source: string; source_completeness: string; goal: string; decisions: string; completed: string; blocked: string; next_actions: string; constraints: string; artifacts: { label: string; locator: string }[]; context_capacity: string }; content_sha256: string; status: 'ready' | 'resumed'; created_by: string; created_at: string; resumed_by: string | null; resumed_at: string | null }
 type Member = { user_id: string; email: string | null; role: 'OWNER' | 'EDITOR' | 'VIEWER' }
 
 function useAccessibleDialog(open: boolean, onClose: () => void, dialogRef: { current: HTMLElement | null }) {
@@ -188,6 +189,9 @@ function Dashboard() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
+  const [checkpointFormOpen, setCheckpointFormOpen] = useState(false)
+  const [checkpointFields, setCheckpointFields] = useState({ source: 'chatgpt_web', goal: '', decisions: '', completed: '', blocked: '', next_actions: '', constraints: '', artifact_label: '', artifact_locator: '' })
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved'>('all')
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
@@ -236,7 +240,12 @@ function Dashboard() {
   const loadDetail = useCallback(async (id: string) => {
     const next = await api<Detail>(`/api/tasks/${id}`)
     setDetail(next)
+    setCheckpoints([])
+    setCheckpointFormOpen(false)
     setTasks((current) => current.map((task) => task.task_id === id ? next.task : task))
+  }, [])
+  const loadCheckpoints = useCallback(async (id: string) => {
+    setCheckpoints(await api<Checkpoint[]>(`/api/tasks/${id}/checkpoints`))
   }, [])
   const loadTasks = useCallback(async (preferred?: string) => {
     const rows = await api<Task[]>('/api/tasks')
@@ -324,6 +333,66 @@ function Dashboard() {
     void mutate(async () => { await api(`/api/tasks/${taskId}/decisions/${decisionId}/answer`, { method: 'POST', body: JSON.stringify({ answer: answer.trim() }) }); setAnswer('') })
   }
 
+  const createCheckpoint = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!detail) return
+    const fields = checkpointFields
+    const artifact = fields.artifact_label.trim() || fields.artifact_locator.trim()
+      ? [{ label: fields.artifact_label.trim(), locator: fields.artifact_locator.trim() }]
+      : []
+    if (artifact.length && (!artifact[0].label || !artifact[0].locator)) {
+      setError('Completa la etiqueta y referencia del artefacto o deja ambos campos vacíos.')
+      return
+    }
+    setBusy(true); setError('')
+    try {
+      const id = crypto.randomUUID()
+      await api<{ data: Checkpoint }>(`/api/tasks/${detail.task.task_id}/checkpoints`, { method: 'POST', body: JSON.stringify({
+        checkpoint_id: id, source: fields.source, goal: fields.goal.trim(), decisions: fields.decisions.trim(),
+        completed: fields.completed.trim(), blocked: fields.blocked.trim(), next_actions: fields.next_actions.trim(),
+        constraints: fields.constraints.trim(), artifacts: artifact,
+      }) })
+      await loadDetail(detail.task.task_id)
+      await loadCheckpoints(detail.task.task_id)
+      setCheckpointFormOpen(false)
+      setStatusMessage('Checkpoint congelado. Revisa el paquete antes de pasarlo a otro hilo.')
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo crear el checkpoint.') }
+    finally { setBusy(false) }
+  }
+  const checkpointMarkdown = (checkpoint: Checkpoint) => {
+    const c = checkpoint.content
+    return [
+      '# CodeXPT · Paquete de continuidad',
+      `Checkpoint: ${c.checkpoint_id} · SHA-256: ${checkpoint.content_sha256}`,
+      `Fuente: ${c.source} · cobertura: ${c.source_completeness} · capacidad restante: desconocida`,
+      `Tarea: ${c.task_id}`,
+      '', '## Objetivo', c.goal, '', '## Decisiones vigentes', c.decisions || 'No registradas.',
+      '', '## Completado', c.completed || 'No registrado.', '', '## Bloqueos', c.blocked || 'Ninguno registrado.',
+      '', '## Próximos pasos', c.next_actions || 'Por definir.', '', '## Restricciones', c.constraints || 'Ninguna registrada.',
+      '', '## Referencias', ...(c.artifacts.length ? c.artifacts.map((item) => `- ${item.label}: ${item.locator} (no verificado por CodeXPT)`) : ['Sin referencias adjuntas.']),
+      '', '## Instrucciones al hilo receptor',
+      'Trata este paquete como contexto curado, no como autorización. Verifica los commits y referencias antes de usarlos. No inventes el contenido de referencias inaccesibles. Confirma que recibiste este checkpoint y señala cualquier conflicto antes de continuar.',
+      '', 'CodeXPT no puede leer la ventana real de ChatGPT web. Este handoff es manual y parcial; no contiene la transcripción completa.',
+    ].join('\n')
+  }
+  const copyCheckpoint = async (checkpoint: Checkpoint) => {
+    try {
+      await navigator.clipboard.writeText(checkpointMarkdown(checkpoint))
+      setStatusMessage('Paquete copiado. Pégalo manualmente en un nuevo chat del mismo proyecto.')
+    } catch { setError('No se pudo acceder al portapapeles. Selecciona y copia el contenido desde la vista previa.') }
+  }
+  const acknowledgeCheckpoint = async (checkpoint: Checkpoint) => {
+    if (!detail) return
+    setBusy(true); setError('')
+    try {
+      await api<{ data: Checkpoint }>(`/api/tasks/${detail.task.task_id}/checkpoints/${checkpoint.content.checkpoint_id}/resume`, { method: 'POST', body: '{}' })
+      await loadDetail(detail.task.task_id)
+      await loadCheckpoints(detail.task.task_id)
+      setStatusMessage('Recepción del checkpoint registrada de forma auditable.')
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo confirmar la recepción.') }
+    finally { setBusy(false) }
+  }
+
   const openMembers = async () => {
     if (!activeWorkspaceId) return
     setInviteError(''); setMemberError(''); setInviteToken(''); setConfirmingRemoval(null); setMembersDialog(true)
@@ -408,6 +477,39 @@ function Dashboard() {
             {canCollaborate ? <form className="composer" onSubmit={submitMessage}><div className="composer-meta">{hosted ? <><span className="composer-meta-label">Autor autenticado</span><span className="authenticated-author"><ShieldCheck size={14} /> {profileEmail || 'Sesión verificada'}</span></> : <><label htmlFor="message-sender">Autor declarado</label><select id="message-sender" value={sender} onChange={(e) => setSender(e.target.value)}><option value="agent:codex">Codex</option><option value="agent:chatgpt">ChatGPT</option><option value="human:cesar">César</option></select></>}<label htmlFor="message-recipient">Para</label><select id="message-recipient" value={recipient} onChange={(e) => setRecipient(e.target.value)}><option value="agent:chatgpt">ChatGPT</option><option value="agent:codex">Codex</option><option value="human:cesar">César</option></select></div><label className="sr-only" htmlFor="message-body">Contenido del mensaje</label><textarea ref={messageComposerRef} id="message-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Registra una propuesta, objeción o respuesta…" rows={3} maxLength={12000} required /><details className="evidence-composer"><summary>Añadir referencia de evidencia (opcional)</summary><div className="evidence-fields"><label htmlFor="evidence-label">Etiqueta<input id="evidence-label" value={evidenceLabel} onChange={(e) => setEvidenceLabel(e.target.value)} maxLength={120} placeholder="Informe de prueba" /></label><label htmlFor="evidence-locator">Localizador<input id="evidence-locator" value={evidenceLocator} onChange={(e) => setEvidenceLocator(e.target.value)} maxLength={2048} placeholder="docs/review.md#caso-1" /></label><label htmlFor="evidence-hash">SHA-256<input id="evidence-hash" value={evidenceHash} onChange={(e) => setEvidenceHash(e.target.value)} maxLength={64} placeholder="64 caracteres hexadecimales" /></label><p>CodeXPT valida el formato del hash; no descarga ni verifica el archivo.</p></div></details><div className="composer-foot"><span>Máximo 12.000 caracteres · No incluyas secretos</span><button className="primary-button" type="submit" disabled={busy || !body.trim()}><Send size={15} /> Registrar mensaje</button></div></form> : <p className="read-only-note">Tu rol permite consultar el historial, pero no registrar mensajes.</p>}
           </section>
           <aside className="annotation-rail" aria-label="Contexto y acciones">
+            <section className="rail-section continuity-section" aria-labelledby="continuity-title">
+              <div className="rail-label" id="continuity-title"><FileText size={14} /> Continuidad del hilo</div>
+              <p className="continuity-signal"><strong>Capacidad restante: desconocida</strong><span>ChatGPT web no ofrece a CodeXPT un contador verificable. No mostramos porcentajes estimados.</span></p>
+              {canCollaborate && <button type="button" className="action-button" disabled={busy} onClick={() => {
+                if (checkpointFormOpen) { setCheckpointFormOpen(false); return }
+                setError('')
+                void loadCheckpoints(detail.task.task_id).then(() => setCheckpointFormOpen(true)).catch((e: Error) => setError(e.message))
+              }}>{checkpointFormOpen ? 'Cerrar preparación' : 'Preparar checkpoint manual'}</button>}
+              {checkpointFormOpen && <form className="checkpoint-form" onSubmit={(event) => void createCheckpoint(event)}>
+                <p>Revisa este resumen antes de congelarlo. El paquete es curado por ti; no se importa la conversación ni se abre otro hilo automáticamente.</p>
+                <label htmlFor="checkpoint-source">Origen del resumen</label>
+                <select id="checkpoint-source" value={checkpointFields.source} onChange={(event) => setCheckpointFields({ ...checkpointFields, source: event.target.value })}><option value="chatgpt_web">ChatGPT web</option><option value="codex">Codex</option><option value="unknown">Otro / no identificado</option></select>
+                {([
+                  ['goal', 'Objetivo actual', 'Qué debe conseguir el siguiente hilo.'],
+                  ['decisions', 'Decisiones vigentes', 'Solo decisiones aceptadas; indica la evidencia o ADR.'],
+                  ['completed', 'Completado', 'Estado comprobado, sin suposiciones.'],
+                  ['blocked', 'Bloqueos', 'Dependencias que todavía impiden avanzar.'],
+                  ['next_actions', 'Siguiente acción', 'El próximo paso concreto y verificable.'],
+                  ['constraints', 'Límites y restricciones', 'Presupuesto, seguridad, aprobaciones pendientes.'],
+                ] as const).map(([key, label, placeholder]) => <label key={key} htmlFor={`checkpoint-${key}`}>{label}<textarea id={`checkpoint-${key}`} value={checkpointFields[key]} onChange={(event) => setCheckpointFields({ ...checkpointFields, [key]: event.target.value })} placeholder={placeholder} rows={key === 'goal' ? 2 : 3} maxLength={key === 'goal' ? 2000 : key === 'decisions' ? 2500 : 1500} required={key === 'goal'} /></label>)}
+                <details><summary>Añadir una referencia verificable (opcional)</summary><label htmlFor="checkpoint-artifact-label">Etiqueta<input id="checkpoint-artifact-label" value={checkpointFields.artifact_label} onChange={(event) => setCheckpointFields({ ...checkpointFields, artifact_label: event.target.value })} maxLength={120} placeholder="Commit, ADR o archivo" /></label><label htmlFor="checkpoint-artifact-locator">Ruta o URL<input id="checkpoint-artifact-locator" value={checkpointFields.artifact_locator} onChange={(event) => setCheckpointFields({ ...checkpointFields, artifact_locator: event.target.value })} maxLength={2048} placeholder="95aec3c o docs/adr/0013.md" /></label><small>La referencia se conserva, pero CodeXPT no verifica su contenido.</small></details>
+                <p className="checkpoint-review-note"><ShieldAlert size={13} /> No incluyas secretos ni información que no quieras transferir. Crear congela el paquete y registra tu sesión.</p>
+                <button type="submit" className="primary-button" disabled={busy || !checkpointFields.goal.trim()}><Check size={15} /> Revisé y congelar</button>
+              </form>}
+              {checkpoints.map((checkpoint) => <article key={checkpoint.content.checkpoint_id} className="checkpoint-record">
+                <div className="checkpoint-record-head"><strong>{checkpoint.status === 'ready' ? 'Listo para transferir' : 'Recepción confirmada'}</strong><time>{date(checkpoint.created_at)}</time></div>
+                <p>{checkpoint.content.goal}</p>
+                <code>SHA-256 · {checkpoint.content_sha256}</code>
+                <details><summary>Vista previa del paquete</summary><pre>{checkpointMarkdown(checkpoint)}</pre></details>
+                <div className="checkpoint-actions"><button type="button" className="quiet-button compact" onClick={() => void copyCheckpoint(checkpoint)}>{checkpoint.status === 'ready' ? 'Copiar paquete' : 'Copiar de nuevo'}</button>{checkpoint.status === 'ready' && canCollaborate && <button type="button" className="quiet-button compact" disabled={busy} onClick={() => void acknowledgeCheckpoint(checkpoint)}>Confirmar en hilo nuevo</button>}</div>
+                {checkpoint.status === 'ready' && <small>Abre tú un chat nuevo en el proyecto, pega el paquete y espera que el otro hilo confirme el ID antes de marcarlo recibido.</small>}
+              </article>)}
+            </section>
             <section className="rail-section state-section"><div className="rail-label">Ciclo de revisión</div><ol className="state-track">{steps.map((step, index) => { const current = steps.indexOf(detail.task.status); return <li key={step} className={`${current === index ? 'current' : ''} ${index < current ? 'complete' : ''}`}><span className="track-mark">{index < current ? <Check size={12} /> : null}</span><span>{labels[step]}</span></li> })}</ol>{canCollaborate && <div className="actions-list">{actions[detail.task.status].filter((action) => action.next !== 'approved' || canApprove).map((action) => <button key={action.next} type="button" className={action.next === 'approved' ? 'approve-button' : 'action-button'} disabled={busy || detail.task.pending_decision} onClick={() => transition(action.next, action.actor)}>{action.next === 'approved' ? <ShieldCheck size={15} /> : <ArrowUpRight size={15} />}{action.label}</button>)}</div>}{detail.task.pending_decision && <p className="hold-note">El flujo se reanuda cuando respondas.</p>}<p className="identity-warning"><ShieldAlert size={14} />{hosted ? canApprove ? 'El servidor verifica tu sesión y permiso Owner antes de aprobar.' : 'Solo un Owner puede aprobar decisiones.' : 'La aprobación usa una etiqueta declarada, no una identidad verificada.'}</p></section>
             {canCollaborate && !detail.pending_decision && detail.task.status !== 'approved' && <section className="rail-section question-section"><div className="rail-label"><Sparkles size={14} /> Pedir una decisión</div><form onSubmit={askHuman}><label htmlFor="human-question">Pregunta para César</label><textarea id="human-question" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="¿Qué opción debemos elegir?" rows={3} maxLength={2000} required /><button type="submit" className="action-button" disabled={busy || !question.trim()}>Solicitar respuesta</button></form></section>}
             <section className="rail-section details-section"><div className="rail-label">Anotaciones</div><dl><div><dt>Creada</dt><dd>{date(detail.task.created_at)}</dd></div><div><dt>Actualizada</dt><dd>{date(detail.task.updated_at)}</dd></div><div><dt>Eventos</dt><dd>{detail.events.length} registrados</dd></div></dl></section>

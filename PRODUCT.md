@@ -16,7 +16,7 @@ Primary user: César, acting as the technical director of a small collaboration 
 
 ## Product Purpose
 
-CodeXPT records structured proposals, reviews, evidence references, and human decisions in one local workspace so the director can follow an engineering review without losing its state or audit history.
+CodeXPT records structured proposals, reviews, evidence references, human decisions, and portable continuity checkpoints in one workspace so collaborators can follow an engineering review without losing its state or audit history.
 
 ## Positioning
 
@@ -28,11 +28,13 @@ The first release runs on the user's workstation, binds its web service to loopb
 
 ## Capabilities and Constraints
 
-- Local task, message, event, and pending-decision tracking.
+- Task, message, event, pending-decision, and immutable checkpoint tracking.
+- A user-curated, bounded Markdown handoff with a content digest, explicit receiving acknowledgment, and no transcript import.
+- ChatGPT web context capacity is explicitly `unknown`; no context-window percentage is fabricated.
 - Idempotent message recording and stale-state rejection.
 - Versioned SQLite schema with transactional upgrades.
 - Human approval is a workflow rule, not a security guarantee; the current actor value can be spoofed by a caller with local access.
-- No direct automation of this ChatGPT browser conversation, no public deployment, no paid API calls, and no arbitrary code execution by a participant in the MVP.
+- No direct automation or scraping of ChatGPT browser conversations, no paid model API calls, and no arbitrary code execution by a participant in the MVP. A Vercel preview exists, but there is no functional hosted API deployment.
 - Content is synthetic or user-provided. Evidence references are declarative until an explicit verifier is built.
 - The 12-task comparison is exploratory and cannot establish statistical significance.
 

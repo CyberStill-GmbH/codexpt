@@ -10,6 +10,7 @@
 - [x] Local Rust HTTP API, loopback browser dashboard, review/decision flow, responsive states, security boundaries, and API/UI smoke tests.
 - [x] Repeatable CLI end-to-end smoke test and documented user journey.
 - [x] Desktop, tablet, and mobile review of real-browser captures; Axe WCAG 2.1 A/AA found no violations in mobile or desktop runs.
+- [x] Immutable, bounded context checkpoints with integrity digest, idempotent creation, one ready checkpoint per task, auditable explicit handoff receipt, and an honest unknown-capacity state for ChatGPT web.
 - [x] README, C4, ADRs, security, operations, and verification records reflect implemented features and unauthenticated local-only limits.
 - [x] `v0.1.0-local-mvp` release reference created after tests and a clean working tree.
 
@@ -40,3 +41,4 @@ The delegated review approved Cognito as the invite-only OIDC candidate, CodeXPT
 - [ ] Produce a reviewed immutable Linux ARM64 artifact, then generate a deployable Terraform plan with current costs; review the plan before applying.
 - [ ] Resolve registrar access, audit current DNS/DNSSEC records, select one DNS authority, and prepare the rollback before changing delegation.
 - [ ] Verify `codexpt.jappi.net.pe` + `api.codexpt.jappi.net.pe` DNS and callback URI, then deploy and have the delegated reviewer inspect the real login and workspace.
+- [ ] Add the hosted checkpoint routes to authorization, workspace-isolation, CSRF, concurrent-retry, retention and browser E2E coverage before enabling checkpoint export to invited users.

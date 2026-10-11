@@ -44,6 +44,46 @@ describe('CodeXPT dashboard smoke', () => {
     expect(await screen.findByRole('alert')).toBeTruthy()
   })
 
+  it('creates, copies and explicitly acknowledges a verified context checkpoint', async () => {
+    const checkpoint = {
+      content: {
+        schema: 'codexpt.context-checkpoint', version: '1.0.0', checkpoint_id: 'checkpoint-1', task_id: task.task_id,
+        source: 'chatgpt_web', source_completeness: 'user_curated_partial', goal: 'Retomar con decisiones verificables',
+        decisions: 'Mantener el techo de coste', completed: '', blocked: '', next_actions: 'Verificar el siguiente gate',
+        constraints: 'No incluir secretos', artifacts: [], context_capacity: 'unknown; no ChatGPT web context telemetry is available',
+      }, content_sha256: 'a'.repeat(64), status: 'ready' as const, created_by: 'human:cesar', created_at: task.created_at,
+      resumed_by: null, resumed_at: null,
+    }
+    let current: { content: typeof checkpoint.content; content_sha256: string; status: 'ready' | 'resumed'; created_by: string; created_at: string; resumed_by: string | null; resumed_at: string | null } = checkpoint
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/auth/status') return json({ configured: false })
+      if (url === '/api/tasks') return json([task])
+      if (url === `/api/tasks/${task.task_id}`) return json(detail)
+      if (url === `/api/tasks/${task.task_id}/checkpoints` && init?.method === 'POST') return json({ data: checkpoint }, 201)
+      if (url === `/api/tasks/${task.task_id}/checkpoints`) return json([current])
+      if (url.endsWith('/checkpoints/checkpoint-1/resume')) { current = { ...checkpoint, status: 'resumed' as const, resumed_by: 'human:cesar', resumed_at: task.created_at }; return json({ data: current }) }
+      return json({ error: 'not found' }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } })
+    render(<App />)
+
+    await screen.findByRole('heading', { name: task.title })
+    expect(screen.getByText('Capacidad restante: desconocida')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Preparar checkpoint manual' }))
+    fireEvent.change(await screen.findByLabelText('Objetivo actual'), { target: { value: 'Retomar con decisiones verificables' } })
+    fireEvent.change(screen.getByLabelText('Decisiones vigentes'), { target: { value: 'Mantener el techo de coste' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Revisé y congelar' }))
+
+    expect(await screen.findByText('Listo para transferir')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Copiar paquete' }))
+    expect(await screen.findByText('Paquete copiado. Pégalo manualmente en un nuevo chat del mismo proyecto.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar en hilo nuevo' }))
+    expect(await screen.findByText('Recepción confirmada')).toBeTruthy()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/tasks/${task.task_id}/checkpoints/checkpoint-1/resume`, expect.objectContaining({ method: 'POST' })))
+  })
+
   it('lets the verified workspace Owner create a one-time invitation', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)

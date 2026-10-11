@@ -73,6 +73,34 @@ test('dashboard: empty workspace state is responsive and accessible', async ({ p
   expect(pageErrors).toEqual([])
 })
 
+test('context checkpoint: reviewed package is clear and usable on mobile, tablet and desktop', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  await page.setViewportSize({ width: 390, height: 844 })
+  await createReview(page, 'Continuidad de contexto')
+  await expect(page.getByText('Capacidad restante: desconocida')).toBeVisible()
+  await page.getByRole('button', { name: 'Preparar checkpoint manual' }).click()
+  await page.getByLabel('Objetivo actual').fill('Continuar la revisión sin perder decisiones vigentes.')
+  await page.getByRole('textbox', { name: 'Decisiones vigentes' }).fill('No se transfiere la transcripción ni secretos.')
+  await page.getByLabel('Siguiente acción').fill('Verificar las referencias en el hilo de destino.')
+  await page.getByRole('button', { name: 'Revisé y congelar' }).click()
+  await expect(page.getByText('Listo para transferir')).toBeVisible()
+  await expect(page.locator('.checkpoint-record code')).toContainText('SHA-256')
+
+  for (const [width, height, suffix] of [[390, 844, 'mobile'], [768, 1024, 'tablet'], [1280, 900, 'desktop']] as const) {
+    await page.setViewportSize({ width, height })
+    await expect(page.getByText('Listo para transferir')).toBeVisible()
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
+    expect(overflow).toBe(false)
+    if (width !== 768) {
+      const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+      expect(accessibility.violations).toEqual([])
+    }
+    await page.screenshot({ path: test.info().outputPath(`checkpoint-${suffix}.png`), fullPage: true })
+  }
+  expect(pageErrors).toEqual([])
+})
+
 test('hosted owner: member management screen renders and creates a one-time invite', async ({ page }) => {
   const task = {
     task_id: '00000000-0000-4000-8000-000000000001', title: 'Review de muestra', description: 'Datos sintéticos de QA.',
