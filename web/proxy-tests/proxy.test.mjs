@@ -21,6 +21,7 @@ const configured = {
 
 test('Vercel SPA fallback serves app routes without intercepting API functions', () => {
   const config = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'))
+  assert.deepEqual(config.rewrites[0], { source: '/api/:path*', destination: '/api?__codexpt_path=:path*' })
   const fallback = config.rewrites.find((rewrite) => rewrite.destination === '/index.html' && rewrite.source.includes('(?!api/'))
   assert.ok(fallback)
   const source = new RegExp(`^${fallback.source}$`)
@@ -184,4 +185,23 @@ test('unknown /api root paths stay JSON 404 responses instead of SPA HTML', () =
     assert.equal(res.headers.get('cache-control'), 'no-store')
     assert.equal(res.body.toString(), '{"error":"not found"}')
   }
+})
+
+test('Vercel API entrypoint preserves nested API paths and original query parameters', async () => {
+  let forwardedUrl
+  const res = new MockResponse()
+  await apiRootHandler(
+    { method: 'GET', url: '/api?__codexpt_path=auth/status&source=login', headers: {} },
+    res,
+    {
+      env: configured,
+      fetchImpl: async (url) => {
+        forwardedUrl = String(url)
+        return Response.json({ configured: false })
+      },
+    },
+  )
+  assert.equal(forwardedUrl, 'https://codexpt-production.up.railway.app/api/auth/status?source=login')
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.body.toString(), '{"configured":false}')
 })

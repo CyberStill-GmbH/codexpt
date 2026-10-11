@@ -88,17 +88,12 @@ function BrandMark() {
   </svg>
 }
 
-function StartupSplash() {
-  return <main className="startup-splash" role="status" aria-live="polite" aria-busy="true">
-    <div className="startup-splash-content">
-      <span className="startup-mark"><BrandMark /></span>
-      <div>
-        <strong>CodeXPT</strong>
-        <p>Estamos comiendo bambú. Volvemos pronto.</p>
-      </div>
+function StartupSplash({ leaving = false }: { leaving?: boolean }) {
+  return <main className={`startup-splash${leaving ? ' is-leaving' : ''}`} role="status" aria-label="CodeXPT se está preparando" aria-live="polite" aria-busy="true">
+    <div className="panda-art startup-art-frame">
+      <img className="startup-art" src="/panda-face.webp" alt="Cara sonriente de un panda." fetchPriority="high" />
+      <span className="panda-wink" aria-hidden="true" />
     </div>
-    <img className="startup-art" src="/not-found.webp" alt="" fetchPriority="high" />
-    <div className="startup-rule" aria-hidden="true"><span /></div>
   </main>
 }
 
@@ -236,6 +231,7 @@ function InviteAcceptance() {
 
 function Dashboard() {
   const [initializing, setInitializing] = useState(true)
+  const [splashLeaving, setSplashLeaving] = useState(false)
   const [apiUnavailable, setApiUnavailable] = useState(false)
   const [tasks, setTasks] = useState<Task[]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -311,6 +307,7 @@ function Dashboard() {
   // oxlint-disable-next-line react/set-state-in-effect -- surface an asynchronous initial-load failure.
   useEffect(() => {
     let active = true
+    const splashStartedAt = performance.now()
     const initialize = async () => {
       try {
         const { configured } = await api<{ configured: boolean }>('/api/auth/status')
@@ -338,7 +335,19 @@ function Dashboard() {
           setError(e instanceof Error ? e.message : 'No se pudo conectar con el servicio.')
         }
       } finally {
-        if (active) setInitializing(false)
+        if (active) {
+          const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+          const minimumVisibleMs = reducedMotion ? 0 : 2100
+          const remainingMs = Math.max(0, minimumVisibleMs - (performance.now() - splashStartedAt))
+          if (remainingMs) await new Promise((resolve) => window.setTimeout(resolve, remainingMs))
+          if (active) {
+            if (!reducedMotion) {
+              setSplashLeaving(true)
+              await new Promise((resolve) => window.setTimeout(resolve, 280))
+            }
+            if (active) setInitializing(false)
+          }
+        }
       }
     }
     void initialize()
@@ -524,7 +533,7 @@ function Dashboard() {
     }
   }
 
-  if (initializing) return <StartupSplash />
+  if (initializing) return <StartupSplash leaving={splashLeaving} />
   if (apiUnavailable) return <BackendUnavailable />
 
   return <div className="app-shell">

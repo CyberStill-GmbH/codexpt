@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
@@ -9,6 +9,7 @@ const task = {
 }
 const detail = { task, messages: [], events: [{ sequence: 1, event_type: 'task_created', actor: 'human:cesar', occurred_at: task.created_at, details: { status: 'open' } }], pending_decision: null }
 const json = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => data })
+configure({ asyncUtilTimeout: 3500 })
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/') })
 
@@ -25,9 +26,10 @@ describe('CodeXPT dashboard smoke', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<App />)
 
-    expect(screen.getByText('Estamos comiendo bambú. Volvemos pronto.')).toBeTruthy()
+    expect(screen.getByRole('status', { name: 'CodeXPT se está preparando' })).toBeTruthy()
     expect(screen.getByRole('status').getAttribute('aria-busy')).toBe('true')
-    expect(document.querySelector('.startup-art')?.getAttribute('src')).toBe('/not-found.webp')
+    expect(document.querySelector('.startup-art')?.getAttribute('src')).toBe('/panda-face.webp')
+    expect(document.querySelector('.startup-splash .panda-wink')).toBeTruthy()
     resolveStatus(json({ configured: false }))
     expect(await screen.findByRole('heading', { name: 'El espacio está listo.' })).toBeTruthy()
   })

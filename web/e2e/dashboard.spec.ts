@@ -58,6 +58,22 @@ test('configured OpenAI OIDC shows ChatGPT sign-in and keeps CodeXPT roles expli
   await expect(page.getByText('OpenAI verifica tu identidad; CodeXPT administra tus permisos y workspace.')).toBeVisible()
 })
 
+test('startup splash shows a smiling panda wink on white before yielding to the app', async ({ page }) => {
+  await page.route('**/api/auth/status', (route) => route.fulfill({ json: { configured: false } }))
+  await page.route('**/api/tasks', (route) => route.fulfill({ json: [] }))
+  await page.goto('/')
+
+  const splash = page.getByRole('status', { name: 'CodeXPT se está preparando' })
+  const panda = splash.getByRole('img', { name: 'Cara sonriente de un panda.' })
+  const wink = splash.locator('.panda-wink')
+  await expect(splash).toBeVisible()
+  await expect(panda).toBeVisible()
+  await expect.poll(() => splash.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(255, 255, 255)')
+  await expect.poll(() => wink.evaluate((element) => getComputedStyle(element).opacity)).toBe('1')
+  await expect(splash).toBeHidden()
+  await expect(page.getByRole('heading', { name: 'El espacio está listo.' })).toBeVisible()
+})
+
 test('dashboard: empty workspace state is responsive and accessible', async ({ page }) => {
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
