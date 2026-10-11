@@ -17,7 +17,7 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal
 uuid = { version = "1", features = ["v4", "serde"] }
 mime_guess = "2"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "postgres", "migrate", "macros", "uuid", "chrono", "any"] }
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.7", features = ["cors"] }
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 base64 = "0.23.1"
 async-trait = "0.1.92"
