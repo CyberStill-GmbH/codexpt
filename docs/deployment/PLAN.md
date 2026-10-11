@@ -1,15 +1,16 @@
 # CodeXPT hosting and deployment plan
 
-**Status (2026-10-11): not deployed; product hostname blocked by DNS.** The
-Vercel preview is protected and its static page builds, but `/api/health`
-reports that the API proxy is not configured. There is no CodeXPT Railway
-service. AWS SSO is authenticated, but the permitted account has no visible
-Route 53 zone or application resources. A lookup for `codexpt.jappi.net.pe`
-currently returns `SERVFAIL`. Cloudflare is the best cost candidate to
-investigate next: the account has no visible Workers & Pages project and no
-`jappi.net.pe` zone. The local SQLite Durable Object spike passes its storage
-tests, but it is not an app or a deployable backend. No cloud resource or DNS
-record has been changed.
+**Status (2026-10-11): frontend deployed from Git to
+[codexpt.vercel.app](https://codexpt.vercel.app); the hosted app is not yet
+functional end to end.** The static UI and HTTPS are live, but `/api/health`
+reports that the API proxy is not configured and there is no CodeXPT Railway
+service. The custom alias `codexpt.jappi.net.pe` remains blocked by DNS
+(`SERVFAIL`). AWS SSO is authenticated, but the permitted account has no visible
+Route 53 zone or application resources. The Cloudflare account has no visible
+Workers & Pages project and no `jappi.net.pe` zone. The local SQLite Durable
+Object spike passes its storage tests, but it is not an app or a deployable
+backend. No cloud resource, parent-zone DNS record, or nameserver delegation
+has been changed.
 
 ## Current decision
 

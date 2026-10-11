@@ -1,5 +1,20 @@
 # Verification strategy
 
+## Git deployment (2026-10-11)
+
+- Commit `fc96d92` is on `main`; Vercel Git integration deployed the frontend
+  to [codexpt.vercel.app](https://codexpt.vercel.app) with HTTPS. The build
+  failed before this push because the repository `.vercelignore` excluded
+  `web/src`; that exclusion was removed.
+- Local browser tests and the static illustration are covered by the checks
+  below; the production deep-link fallback is verified after deployment.
+  `/api/health` still returns 503 because
+  the Vercel proxy has no backend origin configured; no CodeXPT backend service
+  exists. This is a frontend deployment, not an operational hosted MVP.
+- `codexpt.jappi.net.pe` is attached as a Vercel alias, but DNS still does not
+  resolve. No parent-zone records or nameservers were changed because the zone
+  is shared with Qapaq SecOps.
+
 ## Vercel/Railway split preparation (2026-10-10)
 
 The Vercel project `codexpt` is configured with project root `web`, Vite framework, `npm run build`, and `dist` output. `codexpt.jappi.net.pe` is attached to Vercel, but `vercel domains verify` reports invalid DNS; it recommends a `codexpt` CNAME to `c47d9204239c3293.vercel-dns-017.com.`. No DNS record has been edited. No CodeXPT Railway project or generated hostname exists, so no hosted proxy/OIDC flow can be exercised.
