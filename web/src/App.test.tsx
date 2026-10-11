@@ -25,7 +25,7 @@ describe('CodeXPT dashboard smoke', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<App />)
 
-    expect(screen.getByText('Abriendo el registro de revisiones…')).toBeTruthy()
+    expect(screen.getByText('Estamos comiendo bambú. Volvemos pronto.')).toBeTruthy()
     expect(screen.getByRole('status').getAttribute('aria-busy')).toBe('true')
     expect(document.querySelector('.startup-art')?.getAttribute('src')).toBe('/not-found.webp')
     resolveStatus(json({ configured: false }))

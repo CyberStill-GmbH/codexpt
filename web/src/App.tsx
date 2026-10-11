@@ -94,7 +94,7 @@ function StartupSplash() {
       <span className="startup-mark"><BrandMark /></span>
       <div>
         <strong>CodeXPT</strong>
-        <p>Abriendo el registro de revisiones…</p>
+        <p>Estamos comiendo bambú. Volvemos pronto.</p>
       </div>
     </div>
     <img className="startup-art" src="/not-found.webp" alt="" fetchPriority="high" />

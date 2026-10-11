@@ -232,7 +232,7 @@ textarea::placeholder, input::placeholder { color: #aaa89e; }
 .startup-mark { display: grid; flex: 0 0 48px; place-items: center; width: 48px; height: 48px; border: 1px solid var(--rule-dark); background: var(--sheet); }
 .startup-mark .brand-mark { width: 30px; height: 30px; flex-basis: 30px; }
 .startup-splash-content strong { display: block; color: var(--ink); font-size: 16px; font-weight: 600; }
-.startup-splash-content p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.startup-splash-content p { max-width: 30ch; margin: 5px 0 0; color: #30343a; font-size: 16px; font-weight: 500; line-height: 1.4; }
 .startup-art { display: block; width: min(100%, 380px); max-height: 170px; object-fit: contain; }
 .startup-rule { width: min(100%, 280px); height: 1px; background: var(--rule); }
 .not-found-page { min-height: 100svh; display: flex; flex-direction: column; padding: 0 clamp(20px, 5vw, 72px); background: var(--paper); }
