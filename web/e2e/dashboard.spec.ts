@@ -74,6 +74,22 @@ test('startup splash shows a smiling panda wink on white before yielding to the 
   await expect(page.getByRole('heading', { name: 'El espacio está listo.' })).toBeVisible()
 })
 
+test('post-splash unavailable screen and illustration enter softly', async ({ page }) => {
+  await page.route('**/api/auth/status', (route) => route.fulfill({ status: 503, json: { error: 'API proxy is not configured' } }))
+  await page.goto('/')
+
+  await expect(page.getByRole('heading', { name: 'Estamos comiendo bambú. Volvemos pronto.' })).toBeVisible()
+  const pageContent = page.locator('.service-unavailable-main > section')
+  const illustration = page.locator('.service-unavailable-art')
+  await expect.poll(() => pageContent.evaluate((element) => getComputedStyle(element).animationName)).toBe('content-arrive')
+  await expect.poll(() => illustration.evaluate((element) => getComputedStyle(element).animationName)).toBe('illustration-arrive')
+  await expect.poll(() => illustration.locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+  await Promise.all([pageContent, illustration].map((locator) => locator.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)))))
+  await page.screenshot({ path: test.info().outputPath('backend-unavailable-desktop.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: test.info().outputPath('backend-unavailable-mobile.png'), fullPage: true })
+})
+
 test('dashboard: empty workspace state is responsive and accessible', async ({ page }) => {
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))

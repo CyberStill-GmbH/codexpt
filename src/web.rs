@@ -480,6 +480,7 @@ fn router_with_identity_and_origins(
         .route("/codexpt.svg", get(frontend_favicon))
         .route("/favicon.svg", get(frontend_favicon_simple))
         .route("/assets/{*path}", get(frontend_asset))
+        .route("/{asset}", get(frontend_public_asset))
         .fallback(get(not_found))
         .with_state(state.clone())
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
@@ -1317,6 +1318,13 @@ async fn frontend_favicon_simple() -> Response {
 
 async fn frontend_asset(Path(path): Path<String>) -> Response {
     embedded_asset(&format!("assets/{path}"))
+}
+
+async fn frontend_public_asset(Path(asset): Path<String>) -> Response {
+    match asset.as_str() {
+        "not-found.webp" | "panda-face.webp" => embedded_asset(&asset),
+        _ => not_found().await,
+    }
 }
 
 async fn not_found() -> Response {

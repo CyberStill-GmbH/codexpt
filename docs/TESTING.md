@@ -11,8 +11,10 @@
   `/api/health` still returns 503 because
   the Vercel proxy has no backend origin configured; no CodeXPT backend service
   exists. This is a frontend deployment, not an operational hosted MVP.
-- The 404 and startup splash share `web/public/not-found.webp` (about 40 KB).
-  The splash entrance respects `prefers-reduced-motion`.
+- The white startup splash uses `web/public/panda-face.webp`; the 404 and
+  backend-unavailable screens use `web/public/not-found.webp`. Post-splash
+  surfaces and their illustrations enter in sequence, with motion disabled for
+  `prefers-reduced-motion`.
 - `codexpt.jappi.net.pe` is attached as a Vercel alias, but DNS still does not
   resolve. No parent-zone records or nameservers were changed because the zone
   is shared with Qapaq SecOps.
