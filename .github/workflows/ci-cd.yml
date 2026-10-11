@@ -28,7 +28,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run tests
-        run: cargo test --locked
+        run: cargo test --locked -- --test-threads=1
       - name: Run Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
@@ -85,6 +85,8 @@ jobs:
       - name: Build frontend
         working-directory: web
         run: npm run build
+      - name: Precompile E2E server
+        run: cargo build --locked --bin codexpt
       - name: Run browser E2E suite
         working-directory: web
         run: npm run test:e2e

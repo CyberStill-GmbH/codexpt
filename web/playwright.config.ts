@@ -18,6 +18,6 @@ export default defineConfig({
     cwd: '..',
     url: 'http://127.0.0.1:4174/api/health',
     reuseExistingServer: false,
-    timeout: 60_000,
+    timeout: 180_000,
   },
 })
