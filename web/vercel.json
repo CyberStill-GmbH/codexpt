@@ -6,6 +6,6 @@
     { "source": "/api/:path*", "destination": "/api?__codexpt_path=:path*" },
     { "source": "/login", "destination": "/index.html" },
     { "source": "/invite", "destination": "/index.html" },
-    { "source": "/((?!api/|api$).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|api$|.*\\.[^/]+$).*)", "destination": "/index.html" }
   ]
 }
