@@ -1,0 +1,212 @@
+name: CI / Deploy Cloudflare
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codexpt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rust:
+    name: Rust quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run tests
+        run: cargo test --locked
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  worker:
+    name: Cloudflare Worker checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: workers/api/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Audit npm dependency advisories
+        run: npm audit --audit-level=high
+      - name: Type check and unit tests
+        run: npm run check
+      - name: Validate Wrangler deployment bundle
+        run: npm run build
+
+  web:
+    name: Web quality and E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install stable Rust for the E2E server
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked dependencies
+        working-directory: web
+        run: npm ci
+      - name: Audit npm dependency advisories
+        working-directory: web
+        run: npm audit --audit-level=high
+      - name: Install Chromium for Playwright
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Run frontend unit and proxy tests
+        working-directory: web
+        run: npm test && npm run test:proxy
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+      - name: Run browser E2E suite
+        working-directory: web
+        run: npm run test:e2e
+
+  terraform:
+    name: Cloudflare Terraform validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform-cloudflare
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+      - name: Initialize without a remote backend
+        run: terraform init -backend=false -input=false
+      - name: Validate configuration
+        run: terraform validate -no-color
+
+  deploy:
+    name: Deploy Worker to Cloudflare
+    needs: [rust, worker, web, terraform]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+       github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') &&
+      vars.CLOUDFLARE_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    concurrency:
+      group: codexpt-cloudflare-production
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: workers/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: workers/api/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check production configuration without printing values
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CODEXPT_API_HOST: ${{ vars.CODEXPT_API_HOST }}
+          CODEXPT_WEB_ORIGIN: ${{ vars.CODEXPT_WEB_ORIGIN }}
+          CODEXPT_OIDC_ISSUER: ${{ vars.CODEXPT_OIDC_ISSUER }}
+          CODEXPT_OIDC_CLIENT_ID: ${{ vars.CODEXPT_OIDC_CLIENT_ID }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+          BOOTSTRAP_EMAIL: ${{ secrets.BOOTSTRAP_EMAIL }}
+          BOOTSTRAP_WORKSPACE_NAME: ${{ secrets.BOOTSTRAP_WORKSPACE_NAME }}
+        run: |
+          set -euo pipefail
+          required=(CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CODEXPT_API_HOST CODEXPT_WEB_ORIGIN CODEXPT_OIDC_ISSUER CODEXPT_OIDC_CLIENT_ID PROXY_SECRET BOOTSTRAP_EMAIL BOOTSTRAP_WORKSPACE_NAME)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing required Cloudflare production secret/variable: ${name}"
+              exit 1
+            fi
+          done
+          if [[ ${#PROXY_SECRET} -lt 32 ]]; then
+            echo "::error::PROXY_SECRET must contain at least 32 characters."
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          const fail = (message) => { console.error(`::error::${message}`); process.exit(1); };
+          const host = process.env.CODEXPT_API_HOST;
+          if (host !== host.trim() || host.includes('://') || host.includes('/') || !host.endsWith('.workers.dev')) {
+            fail('CODEXPT_API_HOST must be a hostname on the generated workers.dev domain, with no scheme or path.');
+          }
+          for (const key of ['CODEXPT_WEB_ORIGIN', 'CODEXPT_OIDC_ISSUER']) {
+            let url;
+            try { url = new URL(process.env[key]); } catch { fail(`${key} must be a valid HTTPS URL.`); }
+            if (url.protocol !== 'https:' || url.origin !== process.env[key] || url.username || url.password || url.search || url.hash) {
+              fail(`${key} must be a canonical HTTPS origin without credentials, query, or fragment.`);
+            }
+          }
+          NODE
+      - name: Apply reviewed D1 migrations and deploy Worker
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/api
+          command: >-
+            deploy
+            --var API_HOST:${{ vars.CODEXPT_API_HOST }}
+            --var WEB_ORIGIN:${{ vars.CODEXPT_WEB_ORIGIN }}
+            --var OIDC_ISSUER:${{ vars.CODEXPT_OIDC_ISSUER }}
+            --var OIDC_CLIENT_ID:${{ vars.CODEXPT_OIDC_CLIENT_ID }}
+            --var OIDC_REDIRECT_URI:${{ vars.CODEXPT_WEB_ORIGIN }}/api/auth/callback
+            --var LOGIN_SUCCESS_URL:${{ vars.CODEXPT_WEB_ORIGIN }}/
+          preCommands: npx wrangler d1 migrations apply codexpt-production --remote
+          secrets: |
+            PROXY_SECRET
+            BOOTSTRAP_EMAIL
+            BOOTSTRAP_WORKSPACE_NAME
+        env:
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+          BOOTSTRAP_EMAIL: ${{ secrets.BOOTSTRAP_EMAIL }}
+          BOOTSTRAP_WORKSPACE_NAME: ${{ secrets.BOOTSTRAP_WORKSPACE_NAME }}
+      - name: Verify Worker readiness
+        env:
+          CODEXPT_API_HOST: ${{ vars.CODEXPT_API_HOST }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..10}; do
+            if curl --fail --silent --show-error "https://${CODEXPT_API_HOST}/api/health/ready"; then
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "::error::The Worker deployment did not become ready. Review the deployment logs and Cloudflare bindings."
+          exit 1

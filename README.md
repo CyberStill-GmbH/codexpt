@@ -54,6 +54,7 @@ El MVP local tiene cobertura automatizada. La evaluación de hosting seleccionó
 - [Hoja de ruta](ROADMAP.md)
 - [Experimento y métricas](EXPERIMENT.md)
 - [Plan de hosting y costos](docs/deployment/PLAN.md)
+- [CI/CD y despliegues seguros a Cloudflare](docs/deployment/CI-CD.md) · checks en GitHub Actions, migraciones D1 y configuración pendiente.
 - [Decisión de backend Cloudflare Workers + D1](docs/adr/0016-cloudflare-workers-d1-backend.md)
 - [Spike local de SQLite Durable Objects](spikes/cloudflare-do/README.md) · validación limitada, sin recursos cloud.
 
