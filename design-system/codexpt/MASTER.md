@@ -8,7 +8,7 @@ CodeXPT is a private workspace for technical review, explicit human decisions, a
 
 ## Source of truth
 
-- `DESIGN.md` is the established dashboard direction: a warm editorial ledger with Literata headings, IBM Plex Sans interface text, and meaningful status colors.
+- `DESIGN.md` is the shared login/dashboard direction: white surfaces, ink-dark primary actions, IBM Plex Sans, quiet borders, and meaningful status colors.
 - Route-specific overrides live in `design-system/codexpt/pages/`: `dashboard.md`, `invite.md`, and `login.md`. Follow the matching file without allowing it to re-theme other routes.
 - `docs/design/FRONTEND-REVIEW.md` documents component-level UX requirements and the review procedure. The login visual and identity briefs are `docs/design/LOGIN-DESIGN.md` and `docs/identity-v1/LOGIN-DESIGN.md`.
 - `@tabler/icons-react` is the shared UI icon set. Use named imports, one 24 px viewBox language, and consistent stroke weight; do not mix in a second general-purpose icon package. The original CodeXPT panda mark remains its own inline SVG.

@@ -280,6 +280,47 @@ textarea::placeholder, input::placeholder { color: #aaa89e; }
 .invite-token small { color: #52634e; font-size: 10px; line-height: 1.5; }
 .logout-button { margin-left: auto; }
 
+/* Shared CodeXPT dashboard direction: match the login's white, ink, and IBM Plex Sans. */
+.app-shell { background: #fff; color: #17191c; font-family: 'IBM Plex Sans', sans-serif; --paper: #fff; --sheet: #fff; --ink: #17191c; --muted: #555b63; --faint: #6b7179; --rule: #e6e7e9; --rule-dark: #d5d7db; }
+.app-shell .sidebar { background: #fff; border-color: #e6e7e9; }
+.app-shell .workspace, .app-shell .task-row.active { background: #fff; }
+.app-shell .topbar { background: #fff; border-color: #e6e7e9; }
+.app-shell .side-heading { color: #555b63; font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.app-shell .task-row.active { border-left-color: #17191c; }
+.app-shell .task-row:hover, .app-shell .icon-button:hover { background: #f6f7f8; }
+.app-shell .avatar { background: #f1f2f3; color: #34383e; }
+.app-shell .review-heading h1, .app-shell .section-heading h2, .app-shell .empty-conversation strong,
+.app-shell .first-run h1, .app-shell .dialog-head h2 {
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: #17191c;
+  letter-spacing: -.025em;
+}
+.app-shell .review-heading h1 { font-weight: 600; }
+.app-shell .section-heading h2, .app-shell .dialog-head h2 { font-weight: 600; }
+.app-shell .eyebrow, .app-shell .rail-label { letter-spacing: 0; text-transform: none; }
+.app-shell .rail-label { font-weight: 600; color: #25282d; }
+.app-shell .entry-kind { padding: 0; border: 0; color: #555b63; }
+.app-shell .primary-button { border-color: #17191c; border-radius: 4px; background: #17191c; color: #fff; font-size: 13px; }
+.app-shell .primary-button:hover:not(:disabled) { background: #303238; }
+.app-shell .composer { border-color: #e6e7e9; border-radius: 5px; background: #fff; }
+.app-shell .composer-meta select, .app-shell .composer textarea,
+.app-shell .question-section textarea, .app-shell .dialog textarea { background: #fff; }
+.app-shell .action-button { border-color: #d5d7db; border-radius: 4px; }
+.app-shell .action-button:hover:not(:disabled) { background: #f6f7f8; }
+.service-unavailable { min-height: 100svh; display: flex; flex-direction: column; padding: 24px clamp(22px, 5vw, 64px); background: #fff; color: #17191c; }
+.service-unavailable > .brand { align-self: flex-start; }
+.service-unavailable-main { width: min(100%, 980px); flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: clamp(32px, 7vw, 88px); margin: 0 auto; padding: 42px 0; }
+.service-unavailable-main > section { width: min(100%, 440px); margin: auto 0; padding: 24px 0; }
+.service-unavailable-art { min-width: 0; }
+.service-unavailable-art img { display: block; width: 100%; max-height: 340px; object-fit: contain; }
+.service-unavailable-icon { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 24px; border: 1px solid #e6e7e9; border-radius: 50%; color: #555b63; }
+.service-unavailable-label { margin: 0 0 9px; color: #555b63; font-size: 13px; }
+.service-unavailable h1 { max-width: 390px; margin: 0; font-size: clamp(28px, 4vw, 36px); font-weight: 600; letter-spacing: -.035em; line-height: 1.15; }
+.service-unavailable section > p:not(.service-unavailable-label) { margin: 14px 0 24px; color: #555b63; font-size: 15px; line-height: 1.6; }
+.service-unavailable .primary-button { min-height: 48px; padding-inline: 15px; border: 1px solid #17191c; border-radius: 4px; background: #17191c; color: #fff; cursor: pointer; }
+.service-unavailable .primary-button:hover { background: #303238; }
+.service-unavailable footer { padding-top: 15px; border-top: 1px solid #e6e7e9; color: #737a83; font-size: 12px; }
+
 @media (max-width: 1020px) {
   .app-shell { grid-template-columns: 222px minmax(0,1fr); }
   .sidebar { padding-inline: 13px; }
@@ -373,6 +414,11 @@ textarea::placeholder, input::placeholder { color: #aaa89e; }
 @keyframes dialog-backdrop-arrive { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dialog-arrive { from { opacity: .8; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 760px) {
+  .service-unavailable { padding-inline: 21px; }
+  .service-unavailable-main { grid-template-columns: 1fr; gap: 8px; align-content: center; padding: 24px 0; }
+  .service-unavailable-main > section { width: 100%; padding: 8px 0 20px; }
+  .service-unavailable-art { order: 2; }
+  .service-unavailable-art img { max-height: 205px; }
   .not-found-content { grid-template-columns: 1fr; gap: 28px; padding: 34px 0; }
   .not-found-copy { order: 0; }
   .not-found-art { order: 1; }

@@ -16,7 +16,7 @@ Before changing UI, read:
 
 ## Design and implementation
 
-- Preserve CodeXPT's audit-first purpose and the existing dashboard direction. Follow page-specific overrides only on the named route.
+- Preserve CodeXPT's audit-first purpose and the current dashboard direction in `DESIGN.md`. Follow page-specific overrides only on the named route.
 - Use concrete hierarchy, short product copy, and useful state feedback. Avoid template-like AI styling: gradients, glass cards, glows, oversized decorative copy, fake activity, and repeated badges.
 - Prefer bundled fonts, existing icons, and project dependencies. Do not add network font imports.
 - Treat the login visual as a composition reference only. Keep its large collaboration image as the focal point at desktop; use a centered form-only layout at smaller widths.

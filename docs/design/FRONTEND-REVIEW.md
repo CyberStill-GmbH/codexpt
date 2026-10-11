@@ -14,7 +14,7 @@
 ## Current component review
 
 - **Login:** now uses the requested white form + full-bleed illustration composition, neutral IBM Plex Sans, provider-aware OIDC action, and invite link. At 960 px and below the illustration is hidden. Hosted provider compatibility still requires real origin/callback verification.
-- **Dashboard:** retain the approved warm paper ledger and Literata review title. Current synthetic desktop and mobile captures confirm the three-column desktop and chronological mobile structure. Continue checking metadata legibility, task-state-specific actions, focus behavior, and the local-versus-hosted identity notice.
+- **Dashboard:** share the login's white surface, IBM Plex Sans, ink-dark primary action, and restrained neutral borders. Keep the review chronology, metadata legibility, task-state-specific actions, focus behavior, and local-versus-hosted identity notice. When the API is unreachable, show the service-unavailable state instead of presenting local mode as hosted data.
 - **Timeline:** keep audit events distinct from conversation. Show actor, event type, time, and provenance in a stable order; identifiers and locators must not break the layout.
 - **Composer:** keep authorship mode explicit, controls labeled, evidence optional and safely rendered, and submit disabled when there is no valid content or a request is pending.
 - **Annotation rail:** show state, actions, pending decisions, and metadata from the selected task. On smaller widths, move it below the chronology without losing its action hierarchy.

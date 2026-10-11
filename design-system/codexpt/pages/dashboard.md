@@ -1,6 +1,6 @@
 # Dashboard and review workspace override
 
-The dashboard is the central working surface. Follow [`DESIGN.md`](../../../DESIGN.md) and keep its paper-and-ledger identity. This override clarifies interaction and component responsibilities; it does not call for a generic SaaS dashboard or a wholesale theme change.
+The dashboard is the central working surface. Follow [`DESIGN.md`](../../../DESIGN.md): white surfaces, IBM Plex Sans, dark primary buttons, and restrained neutral borders, matching the login's typography and palette. Keep information-dense review behavior without returning to a warm editorial palette or adding generic SaaS decoration.
 
 ## Information architecture
 
@@ -9,7 +9,7 @@ The dashboard is the central working surface. Follow [`DESIGN.md`](../../../DESI
 - The review heading owns the title, short context, and current state.
 - The timeline is the chronological source of truth for conversation and audit events. Differentiate them with text labels as well as markers.
 - The composer records a message and optional evidence. The annotation rail owns lifecycle actions, pending human questions, and task metadata.
-- Empty workspace, no-search-results, API failure, offline/local mode, pending decision, read-only role, and completed review states each need useful copy and a safe next action.
+- Empty workspace, no-search-results, API failure, development-local mode, pending decision, read-only role, and completed review states each need useful copy and a safe next action. If the API is unreachable, never render the development-local workspace as the hosted product; show the service-unavailable state.
 
 ## Component rules
 
@@ -29,6 +29,6 @@ The dashboard is the central working surface. Follow [`DESIGN.md`](../../../DESI
 
 ## Typography and iconography
 
-- Keep Literata for editorial review titles and IBM Plex Sans for UI/body. Use IBM Plex Mono only for timestamps, hashes, and identifiers.
+- Use IBM Plex Sans for dashboard headings and UI/body. Use IBM Plex Mono only for timestamps, hashes, and identifiers.
 - Operational metadata should target 13–14 px where room permits. Compact labels may be smaller only if contrast and scanning remain clear.
 - Use only named, tree-shakeable Tabler React icons for standard controls, at consistent 16–20 px sizes and stroke. Do not add emoji or mix icon families. Preserve the hand-authored inline panda logo and favicon.

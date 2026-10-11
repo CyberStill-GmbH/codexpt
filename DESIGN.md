@@ -1,16 +1,16 @@
 # CodeXPT interface direction
 
-**Status:** applied to the local dashboard · **Reviewed:** 2026-10-10
+**Status:** dashboard direction updated · **Reviewed:** 2026-10-11
 
 ## Product character
 
-CodeXPT should read as a working technical notebook and audit ledger: calm, inspectable, and useful during a review. Information hierarchy and provenance are the visual identity. Avoid promotional dashboard patterns, invented activity, ornamental illustrations, and status colors without meaning.
+CodeXPT should read as a working technical notebook and audit ledger: calm, inspectable, and useful during a review. The login and dashboard share a white canvas, ink-dark typography, IBM Plex Sans, and restrained borders. The login illustration remains the identity focal point; the dashboard keeps its information density for review work. Information hierarchy and provenance are the visual identity. Avoid promotional dashboard patterns, invented activity, ornamental illustrations, and status colors without meaning.
 
 ## Visual rules
 
-- Warm paper surface `#f7f6f2`, white sheet `#ffffff`, ink `#171c24`, muted text `#58616d`, and rules `#d4d2cb`.
-- Terracotta `#ad4937` marks review actions; blue `#345fad` distinguishes a declared ChatGPT participant; green `#0f6956` marks authenticated human input or completed states. Pair color with text and shape.
-- Literata for editorial headings; IBM Plex Sans for controls and prose; IBM Plex Mono only for timestamps, hashes, and identifiers.
+- White surfaces `#ffffff`, ink `#17191c`, muted text `#555b63`, and cool neutral borders `#e6e7e9` / `#d5d7db`.
+- Ink-dark buttons identify the primary action. Keep terracotta, blue, and green for product identity and meaningful statuses only; pair color with text and shape.
+- IBM Plex Sans for headings, controls, and prose; IBM Plex Mono only for timestamps, hashes, and identifiers. Literata remains available to the separate invite route.
 - A narrow timeline rail carries chronology. A side annotation rail carries state, actions, and task metadata. On mobile, the task list becomes a compact horizontal strip and annotations follow the chronology.
 - Keep focus outlines, reduced-motion support, readable contrast, and semantic buttons, labels, lists, and status text.
 - The compact inline SVG mark is a geometric panda with two distinct collaboration paths converging beneath it. Keep a simplified monochrome face for the 16 px favicon; do not reproduce the OpenAI knot or rely on the generated PNG as a production logo.
@@ -26,4 +26,4 @@ CodeXPT should read as a working technical notebook and audit ledger: calm, insp
 
 Code-first implementation was approved in the designated CodeXPT design review conversation. The direction was refined from the visual idea of a technical ledger with an annotation margin. Review the actual browser rendering after functionality; do not treat compilation as design approval.
 
-The actual desktop and mobile dashboard captures were reviewed. The editorial ledger direction was approved, with required refinements for state-specific actions, authenticated authorship, metadata readability, and mobile composition. See [the brand and UX review](docs/design/branding.md) for the generated mark reference and implementation notes.
+The actual desktop and mobile dashboard captures were reviewed. The editorial ledger direction was later replaced by the shared login/dashboard direction above. Keep the state-specific actions, authenticated authorship, metadata readability, and mobile composition requirements. See [the brand and UX review](docs/design/branding.md) for the generated mark reference and implementation notes.

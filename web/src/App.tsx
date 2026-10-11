@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { IconArrowDownLeft as ArrowDownLeft, IconArrowLeft as ArrowLeft, IconArrowUpRight as ArrowUpRight, IconCheck as Check, IconChevronDown as ChevronDown, IconCircleDot as CircleDot, IconClock as Clock3, IconFileText as FileText, IconLock as LockKeyhole, IconLogout as LogOut, IconPlus as Plus, IconSearch as Search, IconSend as Send, IconShieldExclamation as ShieldAlert, IconShieldCheck as ShieldCheck, IconSparkles as Sparkles, IconUserX as UserRoundX, IconUsers as Users } from '@tabler/icons-react'
+import { IconArrowDownLeft as ArrowDownLeft, IconArrowLeft as ArrowLeft, IconArrowUpRight as ArrowUpRight, IconCheck as Check, IconChevronDown as ChevronDown, IconCircleDot as CircleDot, IconClock as Clock3, IconFileText as FileText, IconLock as LockKeyhole, IconLogout as LogOut, IconPlus as Plus, IconRefresh as Refresh, IconSearch as Search, IconSend as Send, IconShieldExclamation as ShieldAlert, IconShieldCheck as ShieldCheck, IconSparkles as Sparkles, IconUserX as UserRoundX, IconUsers as Users } from '@tabler/icons-react'
 import loginCollaborationImage from './assets/login/login-collaboration.webp'
 import './App.css'
 
@@ -99,6 +99,23 @@ function StartupSplash() {
     </div>
     <img className="startup-art" src="/not-found.webp" alt="" fetchPriority="high" />
     <div className="startup-rule" aria-hidden="true"><span /></div>
+  </main>
+}
+
+function BackendUnavailable() {
+  return <main className="service-unavailable" aria-labelledby="service-unavailable-title">
+    <a className="brand" href="/" aria-label="CodeXPT, reintentar conexión"><BrandMark /><span className="brand-word">Code<span>XPT</span></span></a>
+    <div className="service-unavailable-main">
+      <div className="service-unavailable-art"><img src="/not-found.webp" alt="Un panda de CodeXPT recorre dos rutas que vuelven a encontrarse." /></div>
+      <section>
+        <span className="service-unavailable-icon"><ShieldAlert size={21} /></span>
+        <p className="service-unavailable-label">Servicio temporalmente no disponible</p>
+        <h1 id="service-unavailable-title">Estamos comiendo bambú. Volvemos pronto.</h1>
+        <p>La página está en línea, pero el servicio que guarda tus revisiones no responde. Por ahora no podemos abrir el workspace.</p>
+        <button className="primary-button" type="button" onClick={() => window.location.reload()}><Refresh size={16} /> Reintentar conexión</button>
+      </section>
+    </div>
+    <footer>CodeXPT · Workspace de revisión</footer>
   </main>
 }
 
@@ -219,6 +236,7 @@ function InviteAcceptance() {
 
 function Dashboard() {
   const [initializing, setInitializing] = useState(true)
+  const [apiUnavailable, setApiUnavailable] = useState(false)
   const [tasks, setTasks] = useState<Task[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const selectedRef = useRef<string | null>(null)
@@ -315,7 +333,10 @@ function Dashboard() {
         else if (active) setHosted(false)
         if (active) await loadTasks()
       } catch (e) {
-        if (active) setError(e instanceof Error ? e.message : 'No se pudo cargar el espacio.')
+        if (active) {
+          setApiUnavailable(true)
+          setError(e instanceof Error ? e.message : 'No se pudo conectar con el servicio.')
+        }
       } finally {
         if (active) setInitializing(false)
       }
@@ -504,6 +525,7 @@ function Dashboard() {
   }
 
   if (initializing) return <StartupSplash />
+  if (apiUnavailable) return <BackendUnavailable />
 
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Navegación de tareas">

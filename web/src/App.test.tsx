@@ -88,10 +88,15 @@ describe('CodeXPT dashboard smoke', () => {
     expect(screen.getByText(/Actor declarado · origen no autenticado/)).toBeTruthy()
   })
 
-  it('shows a recoverable message when the API cannot be reached', async () => {
+  it('does not present an offline production UI as a local dashboard when the API cannot be reached', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
     render(<App />)
-    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Estamos comiendo bambú. Volvemos pronto.' })).toBeTruthy()
+    expect(screen.getByAltText('Un panda de CodeXPT recorre dos rutas que vuelven a encontrarse.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Reintentar conexión' })).toBeTruthy()
+    expect(screen.queryByText('Espacio local')).toBeNull()
+    expect(screen.queryByText('Servidor en loopback')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Crear revisión' })).toBeNull()
   })
 
   it('creates, copies and explicitly acknowledges a verified context checkpoint', async () => {
