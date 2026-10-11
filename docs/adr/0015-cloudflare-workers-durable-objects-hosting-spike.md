@@ -18,10 +18,10 @@ There is no CodeXPT Railway service, no visible Route 53 hosted zone, and the
 current custom-domain DNS lookup returns `SERVFAIL`.
 
 The authenticated Cloudflare dashboard currently shows no Workers & Pages
-projects and no `jappi.net.pe` zone. The account therefore appears unused for
-these CodeXPT resources; other account-wide quota use must still be checked
-before deployment. Do not infer DNS authority from the registrar or old
-nameserver screenshots.
+projects, no Durable Objects, and no `jappi.net.pe` zone. The account therefore
+appears unused for these CodeXPT resources; other account-wide quota use must
+still be checked before deployment. Do not infer DNS authority from the
+registrar or old nameserver screenshots.
 
 The existing product is Rust/Axum with SQLx identity storage and rusqlite task
 storage. It cannot run unchanged in a Worker. Cloudflare's SQLite-backed
@@ -104,9 +104,15 @@ Domain renewal remains a separate charge.
    inspect account-wide usage/plan. Confirm the service remains Free and
    projectable total hosting stays under US$5.
 6. Inventory the complete authoritative `jappi.net.pe` DNS zone and the
-   registrar's current delegation. Only after preserving all records and
-   proving the hosted app should the exact DNS change be prepared for César's
-   review. Until then use a provider-generated development hostname only.
+   registrar's current delegation. A custom Worker hostname requires a
+   Cloudflare zone. Cloudflare's Free/Pro plans do not support partial/CNAME
+   zones, and separately delegating a child zone such as
+   `codexpt.jappi.net.pe` requires Enterprise. The Free candidate therefore
+   requires moving the full `jappi.net.pe` zone to Cloudflare primary DNS and
+   updating registrar nameservers, after importing and verifying every record.
+   Only after preserving all records and proving the hosted app should the exact
+   DNS change be prepared for César's review. Until then use a provider-
+   generated development hostname only.
 7. Run hosted identity and browser E2E, review privacy/terms, backups, operator
    recovery, abuse controls, and rollback before opening an invite-only beta.
 
@@ -122,3 +128,6 @@ explicit decision after these gates.
 - [Durable Object platform limits](https://developers.cloudflare.com/durable-objects/platform/limits/)
 - [Testing Durable Objects in the Workers runtime](https://developers.cloudflare.com/durable-objects/examples/testing-with-durable-objects/)
 - [Cloudflare Workers Free plan limits](https://developers.cloudflare.com/workers/platform/limits/)
+- [Worker custom domains and routes](https://developers.cloudflare.com/workers/configuration/routing/)
+- [Partial/CNAME DNS setup availability](https://developers.cloudflare.com/dns/zone-setups/partial-setup/)
+- [Subdomain delegation availability](https://developers.cloudflare.com/dns/zone-setups/subdomain-setup/setup/)

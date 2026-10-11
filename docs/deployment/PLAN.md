@@ -57,6 +57,16 @@ also found no Route 53 hosted zone in the AWS account and no `jappi.net.pe` zone
 in the open Cloudflare account. These facts do not identify the current
 registrar-side DNS authority.
 
+For the Cloudflare Free candidate, a custom Worker hostname is served from a
+Cloudflare zone. Free/Pro cannot use Cloudflare's partial (CNAME) setup while
+leaving authoritative DNS elsewhere; that option requires Business or
+Enterprise. Managing only `codexpt.jappi.net.pe` as a separate child zone also
+requires Enterprise. Therefore the Free path is to add the **parent** zone
+`jappi.net.pe` to Cloudflare as a full/primary zone and change the registrar's
+nameservers after importing and verifying the complete record set. This would
+affect all parent-zone records, not just CodeXPT. Do not use the partial-zone
+or child-zone setup as a workaround for missing nameserver access.
+
 Before changing any DNS or nameservers:
 
 1. Identify the authoritative nameservers currently delegated for
@@ -83,6 +93,8 @@ decision after the complete record set and rollback are ready.
 | Vercel | Protected preview exists; static frontend builds, API proxy is unconfigured; custom hostname DNS is invalid. | Do not represent preview as deployed product or enable public access. |
 
 Provider status can change. Recheck directly before a new deployment decision.
+
+Cloudflare routing references: [Worker custom domains and routes](https://developers.cloudflare.com/workers/configuration/routing/), [partial/CNAME setup availability](https://developers.cloudflare.com/dns/zone-setups/partial-setup/), and [subdomain delegation availability](https://developers.cloudflare.com/dns/zone-setups/subdomain-setup/setup/).
 
 ## Release sequence
 
