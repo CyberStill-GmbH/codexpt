@@ -48,12 +48,13 @@ Para desarrollo del frontend, instala Node.js y ejecuta `npm --prefix web ci` y 
 
 ## Estado y próximos hitos
 
-El protocolo local, la persistencia, la CLI y el dashboard tienen cobertura automatizada. El contenedor se compiló y pasó un smoke local reproducible; la siguiente etapa debe validar un proveedor OIDC real, la autorización completa, invitaciones, recuperación y E2E en un entorno alojado antes de abrir una beta privada. La colaboración directa entre agentes sigue fuera del alcance actual.
+El protocolo local, la persistencia, la CLI y el dashboard tienen cobertura automatizada. El contenedor se compiló y pasó un smoke local reproducible. La siguiente etapa de hosting es una migración candidata a Cloudflare Workers + SQLite Durable Objects, no un despliegue aprobado: el spike local solo valida transacciones de checkpoints; identidad, recuperación, DNS y E2E hospedado siguen pendientes. La colaboración directa entre agentes sigue fuera del alcance actual.
 
 - [Validación y límites conocidos](docs/VALIDATION-REPORT.md)
 - [Hoja de ruta](ROADMAP.md)
 - [Experimento y métricas](EXPERIMENT.md)
 - [Plan de hosting y costos](docs/deployment/PLAN.md)
+- [Spike local de SQLite Durable Objects](spikes/cloudflare-do/README.md) · validación limitada, sin recursos cloud.
 
 ## Documentación
 

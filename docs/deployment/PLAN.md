@@ -1,113 +1,147 @@
 # CodeXPT hosting and deployment plan
 
-**Status (2026-10-11): Vercel preview build passed; production launch is blocked.** The frontend preview is available at `https://codexpt-lym0b28zh-cesarguevaras-7571s-projects.vercel.app`, with Vercel deployment protection enabled. Its static page returns successfully, but `/api/health` returns `API proxy is not configured`; no Railway API is connected. The production deployment attempt failed because the upload filter omitted `web/src`; the filter is corrected and the preview build now passes. Current target remains Vercel at `https://codexpt.jappi.net.pe`, Railway's generated HTTPS hostname for the Rust/Axum API, and a server-side Vercel function proxy so cookies and OIDC stay on the Vercel origin. See [ADR-0013](../adr/0013-vercel-railway-split-hosting.md). The custom domain is associated with the Vercel project, but Vercel reports invalid DNS: add the `codexpt` CNAME `c47d9204239c3293.vercel-dns-017.com.` while preserving the Route 53 nameservers and other records. The Railway CLI is authenticated but has no CodeXPT project/service/generated hostname; unrelated projects were left untouched. AWS profile `qapaq-deploy` exists but its SSO token is expired; other configured profiles have no usable credentials. No DNS or Railway changes were made. Real OIDC login, hosted authorization/recovery, Railway volume restore, browser E2E, cost review, and rollback gates remain open. AWS EC2/Terraform remains a separate higher-cost option, not an instruction to deploy.
+**Status (2026-10-11): not deployed; product hostname blocked by DNS.** The
+Vercel preview is protected and its static page builds, but `/api/health`
+reports that the API proxy is not configured. There is no CodeXPT Railway
+service. AWS SSO is authenticated, but the permitted account has no visible
+Route 53 zone or application resources. A lookup for `codexpt.jappi.net.pe`
+currently returns `SERVFAIL`. Cloudflare is the best cost candidate to
+investigate next: the account has no visible Workers & Pages project and no
+`jappi.net.pe` zone. The local SQLite Durable Object spike passes its storage
+tests, but it is not an app or a deployable backend. No cloud resource or DNS
+record has been changed.
 
-ChatGPT reviewed the Vercel/Railway proxy proposal. It recommended treating the native route-secret transform as unverified and selected a server-side function proxy as the testable candidate. The browser-visible origin remains Vercel; the Railway hostname is only the API transport origin. See [ADR-0013](../adr/0013-vercel-railway-split-hosting.md), [the cost decision](#cost-decision-railway-vs-aws), and [ADR-0007](../adr/0007-workers-d1-hosting-spike.md) for the separate Workers/D1 alternative.
+## Current decision
 
-## Target topology
+Follow [ADR-0015](../adr/0015-cloudflare-workers-durable-objects-hosting-spike.md)
+for the release investigation. The candidate is a Cloudflare Worker serving
+the static frontend and API, with SQLite-backed Durable Objects for durable
+state. This requires a TypeScript adapter; the current Rust/Axum application
+cannot be deployed there unchanged. The local spike validates only checkpoint
+transactions and is not sufficient to approve a migration.
 
-- Vercel serves the built Vite frontend on `codexpt.jappi.net.pe`; configure the existing Vercel project root as `web`. The domain is already associated with that project, but the production deployment and effective DNS/certificate are not confirmed.
-- A Vercel Node function proxies `/api/*` to the exact Railway generated `*.up.railway.app` hostname. The proxy injects the internal credential server-side, disables caching, preserves cookies and redirects, and fails closed if configuration is absent. Never rewrite `/api` to SPA HTML.
-- Railway hosts only the Rust/Axum API, one replica, and one persistent `/data` volume for the shared SQLite file used by task and identity modules. This remains a single-writer private beta design, not HA or horizontal scaling.
-- Use Railway's generated HTTPS domain for isolated staging first. Do not attach `codexpt.jappi.net.pe` or any custom subdomain to Railway. The custom app hostname belongs only to Vercel. Do not alter DNS until service, OIDC, proxy and authorization gates pass and the existing zone has been inventoried.
-- **Selected identity provider:** a dedicated Amazon Cognito User Pool using a public app client (no client secret), authorization code only, PKCE S256, and `openid profile email`. Cognito is a design choice, not a configured or live-tested provider. The exact issuer/client ID and HTTPS callback must match the approved Railway host. CodeXPT owns workspace membership and roles in SQLite; provider claims do not grant roles. See [ADR-0008](../adr/0008-cognito-private-beta-identity.md).
-- Mount the persistent volume at `/data`; the container stores SQLite at `/data/codexpt.sqlite3` by default. Keep one replica. Backups must use SQLite's online backup operation and be restored to a fresh path before use.
-- Secrets belong in Railway's service variables and must never enter the repository, Docker build context, image layers, or client bundle.
+- **AWS EC2 is out:** the existing Terraform creates an always-on instance,
+  public IPv4, and EBS volume; the documented baseline is about US$17.51/month
+  before variable charges. The budget is an alert, not a spending cap.
+- **Railway is not a strict-cap choice in the current workspace:** Hobby has
+  US$5 included usage, while the authenticated dashboard showed aggregate
+  workspace use above the included amount. A global limit could stop unrelated
+  services.
+- **Vercel is not the production target for this product:** Vercel Hobby
+  eligibility is limited to personal/non-commercial use, and the current
+  Vercel API proxy design incurs function usage. The existing protected preview
+  is useful for UI review but is not a production API.
+- **Cloudflare Free is only a candidate:** current documented quotas are
+  account-wide. At quota limits, operations fail closed until reset, so cost
+  control has an availability tradeoff. Keep every required component on the
+  Free plan if proceeding; a paid feature would require a new cost decision.
+- **Cloudflare Containers are out for this cap:** Containers require the
+  US$5/month Workers Paid minimum, may bill for resource use above included
+  allowances, and their filesystem is ephemeral by default. They do not retain
+  SQLite state across sleep without adding a durable storage design. See the
+  [Containers pricing](https://developers.cloudflare.com/containers/platform/pricing/)
+  and [disk persistence notes](https://developers.cloudflare.com/containers/faq/).
 
-## Staged release gates
+The product hosting ceiling is **US$5/month**, excluding the already registered
+domain renewal. A no-charge Cloudflare Free deployment is plausible at the beta
+envelope, not yet measured for the complete app. Do not treat it as guaranteed
+availability or a provider-enforced dollar cap across unrelated paid products.
+See ADR-0015 for quotas, assumptions, and gates.
 
-The order matters: hosted-proxy/browser and volume checks require an isolated Railway staging service, so those checks cannot be prerequisites to creating that service. Staging uses only Railway's generated hostname, one synthetic Cognito identity, no invitations, and no custom DNS. The service must remain invite-only and deny all workspace access until the explicitly bootstrapped test owner is present.
+## DNS and hostname
 
-### Gate A — prepare staging
+The requested hostname is `codexpt.jappi.net.pe`. It is attached to the existing
+Vercel project, but Vercel reports invalid DNS and suggests a CNAME target.
+Do not apply that stale target while DNS returns `SERVFAIL`. Read-only checks
+also found no Route 53 hosted zone in the AWS account and no `jappi.net.pe` zone
+in the open Cloudflare account. These facts do not identify the current
+registrar-side DNS authority.
 
-1. **Passed locally:** the current source builds as a multi-stage Docker image (`codexpt:launch-review`), the entrypoint requires hosted OIDC settings, binds `0.0.0.0:$PORT`, runs as non-root, and confines the SQLite path under `/data`. A synthetic OIDC configuration returned HTTP 200 from `/api/health/ready` in an ephemeral local container; that container was removed immediately afterward. This does not validate Cognito or a persistent Railway volume.
-2. **Passed locally:** Rust HTTP authorization tests cover Owner/Editor/Viewer, anonymous and cross-workspace denials, invitations, membership change/revoke, session invalidation, logout, CSRF/Host/Origin/content-type failures and no writes on denial. Rust tests also cover the task/session backup and restore APIs; frontend E2E uses synthetic fixtures. These are not hosted-browser evidence.
-3. **Open:** obtain/verify the dedicated CodeXPT AWS identity, then review a Terraform plan containing only the three resources in `infra/terraform-cognito-test`. Apply that isolated test root only under its separately authorized procedure. Run actual Cognito loopback login, password change, email verification, TOTP enrollment, Authorization Code + PKCE, callback, logout, verified `email_verified`, invitation checks, and explicit initial-owner bootstrap. Cognito is not available in the current environment; the local controlled provider is not real Cognito evidence.
-4. **Open:** inspect Railway plan, current usage/credits, workspace services and limits in the dashboard. The authenticated CLI lists other services but no CodeXPT project; its installed version has no `usage` command. Do not alter workspace-wide limits or touch other projects. Record an incremental cost estimate and approve the staging service/volume spend.
+Before changing any DNS or nameservers:
 
-### Gate B — isolated Railway staging
+1. Identify the authoritative nameservers currently delegated for
+   `jappi.net.pe` and the DNS control panel that owns them.
+2. Export and verify **all** records, including `app`, `qapaq`, MX, TXT, and
+   verification records. A nameserver change can interrupt those unrelated
+   subdomains and email.
+3. Recreate and independently verify the entire zone before delegation. Do
+   not move the parent zone just to make the CodeXPT hostname work.
+4. Confirm the product backend, identity callback, HTTPS certificate, and
+   rollback on a provider-generated staging hostname first.
 
-5. Create a dedicated CodeXPT staging project with one Rust/Axum service, one replica and one `/data` volume, using Railway's generated HTTPS hostname. Configure a Vercel Preview deployment and proxy it to that backend; OIDC callback/logout URLs must use the exact Vercel Preview origin, not Railway. Register that exact callback/logout URL on the isolated Cognito test client through a separately reviewed plan; the present Terraform test root intentionally contains loopback callbacks only. Do not use the product hostname for this step.
-6. Deploy the exact reviewed commit, configure matching server-only proxy credentials in Vercel and Railway, set the backend transport host and public Vercel origin separately, bootstrap one synthetic test Owner, and test browser login/callback/logout, cookie/CSRF/Host/Origin behavior, all role/cross-workspace cases, backend direct-access denial, restart persistence, SQLite online backup/restore, generic liveness/readiness behavior, and rollback on generated staging domains. Inspect logs for tokens/secrets and confirm the service never grants Owner on first login.
-7. Measure service resources and total workspace billing. A one-week sample is required before making a recurring incremental-cost claim. Keep the test identity synthetic and the invitation surface closed.
+Use a provider-generated development hostname during local/staging validation.
+Any future exact registrar or nameserver change needs a separate execution
+decision after the complete record set and rollback are ready.
 
-### Gate C — attach the product hostname and launch the private beta
+## Read-only provider findings
 
-8. Inventory the authoritative DNS zone for `jappi.net.pe` and verify `codexpt.jappi.net.pe` resolves to the existing Vercel project. Do not attach this hostname to Railway. Verify Vercel domain verification and HTTPS certificate before changing Cognito to the final exact callback; keep the API at `/api/*` through the Vercel proxy.
-9. Run hosted browser E2E again on `https://codexpt.jappi.net.pe`, inspect logs, record backup/restore and rollback evidence, then get explicit product approval before sending invitations. No public registration is enabled by this plan.
+| Provider | Current observation | Deployment consequence |
+|---|---|---|
+| Cloudflare | Account dashboard is authenticated; no `jappi.net.pe` zone, no Workers & Pages project, and dashboard showed zero Worker requests for Oct 1–11. | Candidate can be tested without disturbing visible Cloudflare projects; custom host still requires verified DNS authority and zone setup. |
+| AWS | SSO works. No visible Route 53 hosted zone, ECS cluster, ECR repository, running EC2 instance, Elastic IP, Lambda function, or ACM certificate was found in the permitted account/region checks. | Do not run the EC2 Terraform root; it violates the US$5 ceiling. |
+| Railway | CLI authenticated; no CodeXPT project/service. Dashboard workspace usage is above the Hobby included credit. | Do not create a service or alter a workspace-wide hard limit until incremental costs and impact on existing projects are resolved. |
+| Vercel | Protected preview exists; static frontend builds, API proxy is unconfigured; custom hostname DNS is invalid. | Do not represent preview as deployed product or enable public access. |
 
-### Gate D — public launch (not approved)
+Provider status can change. Recheck directly before a new deployment decision.
 
-An invite-only private beta is not a public launch. Before opening the service to arbitrary users, require all hosted gates above plus:
+## Release sequence
 
-10. Add and test abuse controls for OIDC start/callback, invitation and API routes (rate limits, bounded retries/payloads, and a trusted client-IP strategy behind Railway's proxy). The current code enforces a 32 KiB JSON limit and authorization, but has no demonstrated per-IP/account rate-limit behavior. Do not trust arbitrary forwarded-IP headers.
-11. Complete an audit coverage/retention review for allowed and denied actions, document the fact that SQLite audit rows are application records rather than tamper-proof evidence, and exercise alerts for unavailable storage, unhealthy service, failed backup, and unexpected restarts.
-12. Validate operator-managed account provisioning, verified email, invite delivery/one-time token handling, lost-TOTP recovery, owner recovery, data retention/deletion, privacy/support contact and incident response. No self-service sign-up or email delivery provider is currently part of the implementation.
-13. Measure real resource usage, backup age/restore time and end-to-end latency under a representative workload; confirm the product's public claims match shipped functionality. In particular, agent messages are still entered manually; CodeXPT does not yet automatically connect Codex and ChatGPT.
+### Gate 1 — local compatibility and complete backend parity
 
-Until Gate D passes, describe the product only as an invite-only review workspace beta, not a public autonomous multi-agent service.
+The existing Rust suite and Cloudflare spike are local-only evidence. Build a
+separate Worker adapter and pass shared contract tests for tasks, events,
+identity sessions, invitations, workspace membership, checkpoints, audit, and
+agent inbox leases/ACK/retry. Preserve existing RBAC, CSRF/Origin checks,
+single-use invite behavior, revocation semantics, payload bounds, and
+cross-workspace isolation. Test concurrency, idempotency, rollback, quota error
+mapping, database export/import, and recovery. The spike's fixture methods must
+never become public API routes.
 
-## Cost estimate
+### Gate 2 — hosted staging on a generated hostname
 
-Reference is 730 hours/month, us-east-1, Linux on-demand, no free-tier or account credits assumed:
+Use only Cloudflare Free resources and synthetic data. Validate real OIDC
+authorization-code + PKCE, callback/logout, secure session cookies, first-owner
+bootstrap, invitation flow, all role boundaries, worker/API routing, account
+quota behavior, logs, and recovery. Measure CPU, reads, writes, requests,
+storage, and account-wide usage under representative traffic. Verify that
+reaching quotas returns controlled errors without a partial transaction or
+paid upgrade. Keep registration closed. No custom DNS is needed for this gate.
 
-| Item | Calculation | Estimate/month |
-|---|---:|---:|
-| EC2 `t4g.small` | $0.0168/hour × 730 | $12.26 |
-| Public IPv4 | $0.005/hour × 730 | $3.65 |
-| gp3 root volume | 20 GiB × $0.08/GiB-month | $1.60 |
-| **Fixed baseline** | before usage-dependent items | **$17.51** |
+### Gate 3 — restore domain DNS and bind the product hostname
 
-S3 backup bytes/requests, outbound data, Cognito usage above any eligible free tier, and sustained T4g CPU surplus can add cost. Caddy certificates have no certificate fee. The configured $20 monthly budget sends actual/forecast notifications; it does not stop resources or cap charges. Recheck current line items in AWS Pricing Calculator immediately before an apply. Sources: [AWS Price List API](https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/Welcome.html), [VPC public IPv4 pricing](https://aws.amazon.com/vpc/pricing/), [EBS pricing](https://aws.amazon.com/ebs/pricing/), [T4g instance specifications and CPU credits](https://aws.amazon.com/ec2/instance-types/t4/), [AWS Pricing Calculator](https://calculator.aws/).
+Resolve the `SERVFAIL` with the domain registrar/DNS operator. Inventory and
+preserve every existing `jappi.net.pe` record, prove certificate readiness and
+hosted OIDC on staging, then prepare the exact DNS change and rollback. Do not
+touch nameservers or publish `codexpt.jappi.net.pe` until the DNS owner and
+complete zone are known.
 
-## Cost decision: Railway vs AWS
+### Gate 4 — private beta readiness
 
-The AWS figures above are the cost of the current `infra/terraform` topology, not a Terraform estimate for Railway. Terraform only manages the EC2-based AWS deployment today. Reducing its EC2 size cannot bring that always-on architecture below US$1/month: the instance, public IPv4 and EBS each have recurring charges. AWS Lightsail is simpler but starts at US$5/month for a Linux/Unix IPv4 bundle with 0.5 GB RAM, 20 GB storage and 1 TB transfer. Its IPv6-only Nano is US$3.50/month and is not the default recommendation for a public product because client-network reachability needs validation. See the [official Lightsail bundle prices](https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-bundles.html).
+Run browser E2E on the product hostname; test operator recovery, backups,
+retention/deletion, rate controls, privacy/support contact, incident response,
+alerts, and rollback. Confirm the measured full-account monthly hosting cost
+stays below US$5 and that every enabled product remains on its intended plan.
+Keep invitations closed until César approves the hosted beta.
 
-**Selected topology: Vercel frontend + Railway API behind a Vercel function proxy.** This follows César's host placement and retains one same-origin browser session. Railway's generated hostname is the private-by-application API transport; Vercel owns the product hostname and `/api` routes. The function adds an extra invocation and therefore is not necessarily the lowest-cost topology. Railway-only remains a fallback if Vercel plan eligibility or cost makes the selected setup impractical; switching back needs a documented decision and tested origin change.
+### Public release
 
-The lowest incremental-cost path is:
+An invite-only beta is not a public launch. Do not enable public registration
+until all prior gates pass, abuse controls are measured, and the product's
+privacy/security claims match the shipped implementation. CodeXPT currently
+supports manually entered agent messages; it does not automatically connect
+ChatGPT web and Codex.
 
-- Keep one Rust/Axum service and one SQLite database on a persistent Railway volume; no managed database, Redis, or second API service is needed for this single-writer beta.
-- Railway's published Hobby plan is US$5/month and applies up to US$5 of measured service usage toward that subscription. Usage above the included amount is billed; the paid plan is a minimum commitment, not a free tier. A measured light-usage scenario can fit inside the included US$5, but this is not a guarantee or a measured CodeXPT bill. See [Railway plan pricing](https://docs.railway.com/pricing/plans) and [how Railway bills resource usage](https://docs.railway.com/pricing/understanding-your-bill).
-- ChatGPT's illustrative scenario was about US$2.33/month of CodeXPT resource use (about 200 MiB average RAM, 0.01 vCPU average, 0.5 GB volume and 1 GB egress). The value must be measured in Railway for at least a week and added to the usage of the other existing services. The incremental amount is `max(5, existing + CodeXPT) - max(5, existing)`; therefore US$0 additional is possible while the combined resource consumption stays within the subscription credit, but **under US$1 additional cannot be promised without inspecting actual usage and remaining credit**.
-- Railway supports a compute usage hard limit that stops all workloads in the selected workspace after the configured compute limit is reached. This is a cost control with an availability tradeoff, not a per-service-only AWS budget; setting it without reviewing every workload in that workspace could shut down unrelated projects. Do not change workspace-wide limits as part of this repository task. See [Railway cost controls](https://docs.railway.com/pricing/cost-control).
-- Vercel Functions execute for API requests and add usage-sensitive costs. Vercel's current Hobby plan allows personal/non-commercial projects only; current Pro list price is US$20/month before any Railway plan or usage. If CodeXPT is commercial, Hobby is not an eligible production plan and Pro alone breaks the earlier sub-US$1 total-cost target. Confirm the Vercel account plan and eligibility before public use. See [Vercel pricing](https://vercel.com/pricing), [Hobby restrictions](https://vercel.com/docs/plans/hobby), and [function billing](https://vercel.com/docs/functions#how-vercel-functions-pricing-works).
-- Use provider-generated domains for isolated staging. Do not change `jappi.net.pe` DNS until identity and authorization tests pass and all existing records have been inventoried.
+## Existing AWS Terraform
 
-Railway **does not make the app free**: the existing US$5 subscription remains part of total household/business spend, and resource usage above the included amount is billed. A Railway usage hard limit suspends workloads when reached, so its safety is balanced against downtime. The selected scope is a private, single-instance beta with an export/backup and restore procedure, not a highly available production service. This is the recommended cost path, not deployment approval; production remains blocked on the readiness gates below.
+`infra/terraform` is not the selected deployment. Its current EC2 topology has
+a documented fixed baseline near US$17.51/month before variable charges, and
+the configured AWS Budget only notifies. The separate Cognito test root does
+not prove hosted production authentication. Do not run `terraform apply` or
+`destroy` as a shortcut for this Cloudflare evaluation.
 
-## Deployment readiness gates
+## Relevant decisions
 
-Before creating a Railway service or publishing a public URL, prepare and verify:
-
-1. A reproducible multi-stage Rust/frontend container build and explicit start/bind configuration; current local mode intentionally listens on loopback.
-2. One persistent volume mounted at the exact SQLite database path, one replica, tested graceful shutdown and restart, plus a consistent SQLite backup and restore independent of the live file.
-3. Real OIDC login, callback/host/origin values, session cookie behavior, CSRF/CORS and the full Owner/Editor/Viewer/cross-workspace authorization matrix against an isolated hosted environment.
-4. A production build and E2E test against the selected host with synthetic users/data, no secrets in logs, and a documented rollback.
-5. A review of Railway workspace plan, current usage, other services, and a cost limit that accounts for workspace-wide shutdown effects. Measure the deployed service for at least a week before asserting a recurring incremental cost.
-
-Only after these gates pass should a hosted beta plan be produced. Keep Terraform AWS as an explicitly higher-cost alternative; do not create a second backend or database merely to split the UI from the API without a measured reason.
-
-## Bootstrap and operations
-
-1. For Gate B only, create an isolated staging service after Gate A and the workspace cost review pass. Set the Railway volume mount to `/data`, one replica, Dockerfile build, and liveness path `/api/health`. Vercel's `web` project root serves the frontend and `/api/*` function.
-2. Set the matching random proxy secret in Railway and Vercel as private runtime variables, not build variables. Railway service variables: `CODEXPT_OIDC_ISSUER`, `CODEXPT_OIDC_CLIENT_ID`, `CODEXPT_OIDC_REDIRECT_URI`, `CODEXPT_LOGIN_SUCCESS_URL`, `CODEXPT_API_HOST` (generated Railway hostname only), `CODEXPT_WEB_ORIGIN` (Vercel staging origin), `CODEXPT_PROXY_SECRET`, `CODEXPT_BIND_ADDR=0.0.0.0:<PORT>`, and the `/data` database path. Vercel function variables: `CODEXPT_RAILWAY_ORIGIN=https://<generated-host>.up.railway.app`, `CODEXPT_RAILWAY_HOST=<same-generated-host>.up.railway.app`, and the same `CODEXPT_PROXY_SECRET`. The proxy rejects any origin/hostname mismatch. Set OIDC callback/logout to the exact Vercel staging origin. Never put credentials in build args or commit them.
-3. Sign in with the initial verified identity, retrieve its exact `(issuer, sub)` and verified email from the provider, then run the explicit one-time `identity bootstrap-owner` command against the persistent database. No first-login Owner behavior exists.
-4. Verify login/logout, role restrictions, CSRF, origin/host checks, cross-workspace denial, restart persistence, backup, and restore in staging. Keep invitations closed until Gate C and explicit product approval.
-5. Monitor Railway's resource usage, service restarts, disk use, backup age, and application logs. Review workspace-wide cost controls before changing them because they can suspend unrelated services.
-6. For shutdown, stop the service, create and verify a final online SQLite backup, and only then remove the Railway service/volume or custom domain after explicit review. A versioned backup or volume must not be deleted until the recovery copy is verified.
-
-## Known gaps / decisions
-
-- ADR-0007 keeps this AWS plan as a documented alternative only while the beta platform ceiling is US$1/month. A Workers/D1 spike must pass all security, integrity, recovery, workload and cost gates before any architecture migration is proposed. No DNS or infrastructure action is authorized by that spike.
-- The monthly estimate excludes the already purchased domain; its registrar renewal is a separate recurring cost and must be added to the product's total operating budget.
-- Vercel's existing project/domain assignment does not establish that its Hobby plan is valid for a commercial product. Verify the current plan and terms before relying on it; the low-cost spike should include a compliant frontend host.
-
-- The current account's usage, remaining included credit, available resources, and workspace-wide cost control setting have not been inspected. This installed Railway CLI does not provide a `usage` subcommand, and no CodeXPT project/service/generated hostname exists yet. A Vercel preview exists; no backend or production deployment has been performed.
-- Cognito is selected in [ADR-0008](../adr/0008-cognito-private-beta-identity.md), but no live Cognito login or hosted browser flow has been exercised. The local controlled-provider test is not evidence of a live login. OpenAI website sign-in remains unavailable to CodeXPT unless OpenAI separately authorizes a client; it is not a beta prerequisite.
-- The AWS deployment root couples Cognito to EC2; do not apply it to obtain only Cognito. The separate `infra/terraform-cognito-test` root registers only the exact local callback. The AWS SSO profile needs reauthentication before Route 53 changes; Railway CLI has no linked CodeXPT project. No AWS or Railway cloud changes have been made.
-- The application requires `CODEXPT_API_HOST` to be the bare Railway generated hostname and `CODEXPT_WEB_ORIGIN` to be `https://codexpt.jappi.net.pe` for final use. The Vercel callback, proxy boundary, direct-backend rejection, and hosted browser flow remain unverified.
-- The one-instance SQLite topology is approved only for a small private beta. It has downtime risk and one writer; it does not provide horizontal scaling or high availability.
-- Cognito has deletion protection and S3 has `force_destroy = false`; clean teardown needs explicit operator steps. Backups are data and must be retained or deliberately purged.
-- No SSM VPC endpoints are provisioned; the instance needs working public egress through its Elastic IP and internet gateway for SSM, package/image retrieval, the selected identity provider, and S3. There is no NAT Gateway.
+- [ADR-0015: Cloudflare Workers + SQLite Durable Objects candidate](../adr/0015-cloudflare-workers-durable-objects-hosting-spike.md)
+- [ADR-0014: verified context checkpoint handoff](../adr/0014-verified-context-checkpoint-handoff.md)
+- [ADR-0013: Vercel + Railway proxy proposal, superseded for launch planning](../adr/0013-vercel-railway-split-hosting.md)
+- [ADR-0007: original Workers/D1 spike](../adr/0007-workers-d1-hosting-spike.md)

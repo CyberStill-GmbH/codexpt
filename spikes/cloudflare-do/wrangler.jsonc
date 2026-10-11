@@ -1,0 +1,13 @@
+{
+  "name": "codexpt-do-compatibility-spike",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-11",
+  "durable_objects": {
+    "bindings": [
+      { "name": "WORKSPACES", "class_name": "WorkspaceStore" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["WorkspaceStore"] }
+  ]
+}

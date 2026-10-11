@@ -1,6 +1,6 @@
 # ADR-0013: Vercel frontend with Railway API proxy
 
-- **Status:** Accepted as the target topology; hosted security and identity gates remain open
+- **Status:** Superseded as the launch candidate by [ADR-0015](0015-cloudflare-workers-durable-objects-hosting-spike.md); hosted security and identity gates remain open
 - **Date:** 2026-10-10
 - **Decision owner:** César; implementation review delegated to Codex and ChatGPT
 - **Supersedes:** The hosting choice in [ADR-0011](0011-same-origin-railway-beta.md)

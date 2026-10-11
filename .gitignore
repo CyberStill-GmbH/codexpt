@@ -1,6 +1,8 @@
 # Local Rust build artifacts.
 debug
 /target
+**/node_modules/
+**/.wrangler/
 **/*.rs.bk
 *.pdb
 **/mutants.out*/
