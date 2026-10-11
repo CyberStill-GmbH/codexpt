@@ -1,25 +1,21 @@
-# ADR-0011: Same-origin Railway topology for the invite-only beta
+# ADR-0011: Same-origin Railway topology for the invite-only beta (superseded)
 
-- **Status:** Accepted for the private-beta candidate; release gates remain open
+- **Status:** Superseded by [ADR-0013](0013-vercel-railway-split-hosting.md); release gates remain open
 - **Date:** 2026-10-10
 - **Decision owner:** César; implementation review delegated to Codex and ChatGPT
 - **Supersedes:** Only the original two-host deployment sketch in ADR-0004. Identity and authorization decisions in ADR-0004 remain in force.
 
 ## Context
 
-The Rust/Axum server embeds the built Vite frontend and already requires hosted `CODEXPT_API_HOST` and `CODEXPT_WEB_ORIGIN` to be the same HTTPS origin. The identity design uses a host-only session cookie, exact Host/Origin validation, CSRF protection, and one SQLite file shared by task storage and SQLx identity storage. A Vercel frontend plus a separate API hostname would add credentialed CORS and cookie-origin configuration without reducing the current hosting subscription or providing a measured product benefit.
+This was the first private-beta proposal: Railway would serve the embedded Vite frontend and Rust/Axum API from one origin. César later selected Vercel for the product hostname and Railway's generated hostname for the backend. The split-origin design and its new security gates are documented in ADR-0013.
 
-## Decision
+## Historical decision (not active)
 
-1. Run one Railway service: Rust/Axum serves the embedded web build and `/api/*` routes from one origin. Keep one replica and one persistent volume mounted at `/data`; do not introduce a separate SQL database or Redis.
-2. The only CodeXPT application hostname in this beta is `https://codexpt.jappi.net.pe`. The API is reached at paths such as `https://codexpt.jappi.net.pe/api/session` and `https://codexpt.jappi.net.pe/api/auth/callback`. `api.codexpt.jappi.net.pe` is not part of the active topology and must not be registered as an OIDC callback or DNS alias for this release.
-3. Use Railway's generated HTTPS hostname for an isolated staging login/browser test. Attach `codexpt.jappi.net.pe` and publish the URL only after the hosted OIDC, authorization, persistence/recovery, cost, and rollback gates pass. Railway terminates TLS and provisions the certificate for the attached hostname; DNS points the single `codexpt` label to the Railway-provided target.
-4. Keep Vercel outside the application request path. It may host a separate marketing site later, but it must not proxy authenticated beta API calls unless a new ADR demonstrates a requirement and re-tests cookie/CORS/CSRF behavior.
-5. No existing zone, nameserver, DNS record, project, or Railway workspace limit is changed by this ADR. Verify existing records first and make any domain attachment only after staging gates pass.
+The historical design used one Railway service for frontend and API, with Railway's generated domain in staging and the custom hostname at launch. Do not apply its Vercel-exclusion or same-host environment-variable instructions. Follow ADR-0013.
 
-## Security and operations
+## Historical security and operations
 
-- Set `CODEXPT_API_HOST=codexpt.jappi.net.pe`, `CODEXPT_WEB_ORIGIN=https://codexpt.jappi.net.pe`, and the exact Cognito callback `https://codexpt.jappi.net.pe/api/auth/callback` only for the final custom-domain environment. Staging uses that environment's generated host for all three values.
+- The old plan set `CODEXPT_API_HOST` and `CODEXPT_WEB_ORIGIN` to the same hostname. The new split plan has distinct transport/public origins.
 - Preserve the `__Host-` session cookie, `Secure`, `HttpOnly`, `Path=/`, `SameSite=Lax`, CSRF token, and exact Host/Origin checks. Same-origin removes credentialed cross-origin CORS; it does not remove CSRF defenses.
 - Do not point the custom hostname at an unconfigured service. A DNS record does not prove authentication works or imply launch approval.
 - Maintain one writer and a verified backup/restore routine. This topology is a small invite-only beta, not an HA, multi-region, or public self-registration design.

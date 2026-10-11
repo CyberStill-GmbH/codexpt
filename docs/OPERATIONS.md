@@ -38,7 +38,7 @@ CLI commands open `.codexpt/state.sqlite3`, perform schema migrations, execute o
 
 ### Legacy AWS/EC2 restore procedure (not the active beta topology)
 
-The following SSM/S3 procedure is only for the documented AWS/EC2 alternative. The active candidate is Railway + one SQLite volume; do not use this AWS runbook for it. A Railway restore rehearsal and platform-specific runbook are still required before the hosted beta.
+The following SSM/S3 procedure is only for the documented AWS/EC2 alternative. The active candidate is Vercel frontend/API proxy + Railway Rust backend and one SQLite volume; do not use this AWS runbook for it. A Railway restore rehearsal and platform-specific runbook are still required before the hosted beta.
 
 1. Open an SSM Session Manager shell and stop `codexpt.service` and `codexpt-backup.timer`.
 2. Download the selected S3 backup to `/var/lib/codexpt/recovery/backup.sqlite3` using the instance role. Record its S3 key and verify the expected restore point.
@@ -60,7 +60,9 @@ The CLI exits after each operation. Stop a future local server with Ctrl+C and c
 
 ## Identity v1 prototype status
 
-The branch contains a hosted identity prototype; it is not deploy-ready. Login stays visibly disabled unless `CODEXPT_OIDC_ISSUER`, `CODEXPT_OIDC_CLIENT_ID`, `CODEXPT_OIDC_REDIRECT_URI`, and `CODEXPT_LOGIN_SUCCESS_URL` are valid. When OIDC is enabled, `CODEXPT_BIND_ADDR`, `CODEXPT_API_HOST`, and `CODEXPT_WEB_ORIGIN` are also mandatory; production origins must use HTTPS. The selected beta provider is a dedicated Cognito User Pool with a public Authorization Code + PKCE client and no client secret (see [ADR-0008](adr/0008-cognito-private-beta-identity.md)). OpenAI website sign-in requires a CodeXPT client authorized by OpenAI and is not a beta dependency. Keep the local server bound to loopback. Never test hosted settings against production data until the authorization acceptance plan passes.
+The branch contains a hosted identity prototype; it is not deploy-ready. Login stays visibly disabled unless `CODEXPT_OIDC_ISSUER`, `CODEXPT_OIDC_CLIENT_ID`, `CODEXPT_OIDC_REDIRECT_URI`, and `CODEXPT_LOGIN_SUCCESS_URL` are valid. When hosted OIDC is enabled, `CODEXPT_BIND_ADDR`, `CODEXPT_API_HOST` (Railway transport hostname), `CODEXPT_WEB_ORIGIN` (Vercel public origin), and `CODEXPT_PROXY_SECRET` are also mandatory; production origins must use HTTPS. Configure the same high-entropy proxy secret only in Vercel Function runtime variables and Railway service variables. The selected beta provider is a dedicated Cognito User Pool with a public Authorization Code + PKCE client and no client secret (see [ADR-0008](adr/0008-cognito-private-beta-identity.md)). OpenAI website sign-in requires a CodeXPT client authorized by OpenAI and is not a beta dependency. Keep the local server bound to loopback. Never test hosted settings against production data until the authorization acceptance plan passes.
+
+For the hosted Vercel/Railway split, Vercel owns `codexpt.jappi.net.pe`; Railway gets only its generated backend HTTPS hostname. The browser uses `/api/*` on Vercel, which proxies to Railway. Keep Vercel's `CODEXPT_RAILWAY_ORIGIN`, `CODEXPT_RAILWAY_HOST`, and `CODEXPT_PROXY_SECRET` as server-only runtime variables, never `VITE_*`; the origin and explicit host must match exactly. Railway's `CODEXPT_API_HOST` must exactly match the generated hostname without scheme, while `CODEXPT_WEB_ORIGIN`, OIDC callback and success URL use the public Vercel origin. Public `GET /api/health` is generic liveness; `/api/health/ready` reveals readiness only through the authenticated proxy. See [ADR-0013](adr/0013-vercel-railway-split-hosting.md).
 
 ### Cognito OIDC loopback test mode
 

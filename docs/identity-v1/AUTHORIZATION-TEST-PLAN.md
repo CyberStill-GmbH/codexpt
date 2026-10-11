@@ -59,7 +59,7 @@ The task store uses rusqlite while the identity adapter uses SQLx against the sa
 
 ## CSRF and browser boundary
 
-- The active same-origin topology grants no credentialed cross-origin CORS access. Same-origin requests still require exact Host/Origin and CSRF checks; cross-origin requests from `null`, untrusted siblings, previews, or a wrong scheme/port receive no access-control grant and mutations are rejected.
+- The active Vercel frontend/API-proxy topology keeps browser requests same-origin and grants no credentialed cross-origin CORS access. The backend still validates its Railway transport Host plus the exact Vercel Origin and CSRF token; cross-origin requests from `null`, untrusted siblings, previews, or a wrong scheme/port receive no access-control grant and mutations are rejected.
 - Mutating request without CSRF token, with token from another session, missing Origin, or Origin mismatch is rejected before reading/mutating tenant resources.
 - Missing/wrong Host, unsupported content type, oversized JSON, and method override are rejected.
 - The session cookie is named `__Host-codexpt_session` and has `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, and no `Domain`; provider tokens never enter JS storage, URLs, logs, or API response.

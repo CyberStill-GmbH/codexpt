@@ -1,12 +1,12 @@
 # ADR-0004: Identity and workspace authorization boundary
 
-- **Status:** Identity boundary accepted for an invite-only hosted beta prototype; implementation partially present, not release-ready. The original provider-tier selection is superseded by [ADR-0008](0008-cognito-private-beta-identity.md), and the split-host deployment sketch is superseded by [ADR-0011](0011-same-origin-railway-beta.md).
+- **Status:** Identity boundary accepted for an invite-only hosted beta prototype; implementation partially present, not release-ready. The original provider-tier selection is superseded by [ADR-0008](0008-cognito-private-beta-identity.md), and hosting choices are now superseded by [ADR-0013](0013-vercel-railway-split-hosting.md).
 - **Date:** 2026-10-10
 - **Decision owners:** César (product director); Codex, with delegated ChatGPT review
 
 ## Context
 
-The `v0.1.0-local-mvp` is a single-user local tool. Its actor labels are declarations; they do not establish identity. The local server must remain usable without accounts or internet. A later hosted beta needs authenticated users, workspace isolation, revocable sessions, and approvals attributable to a verified human. The initial Vercel + Rust API split (`codexpt.jappi.net.pe` and `api.codexpt.jappi.net.pe`) was a proposal; the active beta topology is one Railway service with one same-origin hostname.
+The `v0.1.0-local-mvp` is a single-user local tool. Its actor labels are declarations; they do not establish identity. The local server must remain usable without accounts or internet. A later hosted beta needs authenticated users, workspace isolation, revocable sessions, and approvals attributable to a verified human. Earlier Vercel/Railway and Railway-only hosting proposals are historical; the active target is Vercel frontend + `/api` proxy and a Railway backend hostname as defined by ADR-0013.
 
 Authentication must not be spread across React components, HTTP handlers, and the existing protocol core. A user must never select `human:cesar` or a role in a request body to gain authority.
 
@@ -39,7 +39,7 @@ Provider pricing changes. Re-check the linked official pages, applicable AWS org
 
 ## Browser and API flow
 
-The following sequence diagram records the original split-host proposal and is retained as design history. For the active same-origin flow and exact domain mapping, see [ADR-0011](0011-same-origin-railway-beta.md) and the [deployment plan](../deployment/PLAN.md).
+The following sequence diagram records an original split-host proposal and is retained as design history. For the active Vercel-proxy flow and exact domain mapping, see [ADR-0013](0013-vercel-railway-split-hosting.md) and the [deployment plan](../deployment/PLAN.md).
 
 ```mermaid
 sequenceDiagram
@@ -64,7 +64,7 @@ sequenceDiagram
     API-->>UI: Safe profile + server-derived role/capabilities (no provider tokens)
 ```
 
-The historical split-host design would require exact credentialed CORS and a host-only API cookie. Under the active same-origin topology, keep the host-only cookie and CSRF/Host/Origin checks; browser/API requests share the same origin and need no cross-origin credentialed CORS.
+Direct browser-to-Railway requests would require cross-origin cookie and CORS changes and are not selected. Under the active Vercel proxy topology, browser/API requests remain same-origin; preserve the host-only cookie and CSRF/Host/Origin checks, and authenticate the proxy separately as described by ADR-0013.
 
 ## Data model and module boundary
 

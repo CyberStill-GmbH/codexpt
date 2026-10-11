@@ -25,6 +25,7 @@ use crate::{
 };
 
 const MAX_REQUEST_BYTES: usize = 32 * 1024;
+const PROXY_SECRET_HEADER: &str = "x-codexpt-proxy-key";
 
 #[derive(Clone)]
 struct AppState {
@@ -34,6 +35,7 @@ struct AppState {
     oidc: Option<OidcConfig>,
     api_host: Option<String>,
     web_origin: Option<String>,
+    proxy_secret: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -160,7 +162,7 @@ struct FrontendAssets;
 pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let loopback_test = oidc_loopback_test_mode()?;
     let oidc_config = OidcConfig::from_env();
-    let (address, api_host, web_origin) = if let Some(config) = oidc_config.as_ref() {
+    let (address, api_host, web_origin, proxy_secret) = if let Some(config) = oidc_config.as_ref() {
         let bind = std::env::var("CODEXPT_BIND_ADDR")
             .map_err(|_| "CODEXPT_BIND_ADDR is required when OIDC is enabled")?
             .parse::<SocketAddr>()?;
@@ -168,12 +170,26 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
             .map_err(|_| "CODEXPT_API_HOST is required when OIDC is enabled")?;
         let web_origin = std::env::var("CODEXPT_WEB_ORIGIN")
             .map_err(|_| "CODEXPT_WEB_ORIGIN is required when OIDC is enabled")?;
+        let proxy_secret = match std::env::var("CODEXPT_PROXY_SECRET") {
+            Ok(secret) if !loopback_test => {
+                validate_proxy_secret(&secret)?;
+                Some(secret)
+            }
+            Ok(_) => return Err("CODEXPT_PROXY_SECRET is not valid in loopback test mode".into()),
+            Err(std::env::VarError::NotPresent) if loopback_test => None,
+            Err(std::env::VarError::NotPresent) => {
+                return Err("CODEXPT_PROXY_SECRET is required when hosted OIDC is enabled".into());
+            }
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err("CODEXPT_PROXY_SECRET must be valid UTF-8".into());
+            }
+        };
         if loopback_test {
             validate_loopback_test_origin(config, bind, &api_host, &web_origin)?;
         } else {
-            validate_hosted_origin(config, &api_host, &web_origin)?;
+            validate_hosted_origin(config, &api_host, &web_origin, true)?;
         }
-        (bind, Some(api_host), Some(web_origin))
+        (bind, Some(api_host), Some(web_origin), proxy_secret)
     } else {
         if loopback_test {
             return Err("CODEXPT_OIDC_LOOPBACK_TEST requires a complete OIDC configuration".into());
@@ -183,7 +199,10 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
                 "CODEXPT_BIND_ADDR is only valid with a complete OIDC configuration".into(),
             );
         }
-        (SocketAddr::from(([127, 0, 0, 1], port)), None, None)
+        if std::env::var_os("CODEXPT_PROXY_SECRET").is_some() {
+            return Err("CODEXPT_PROXY_SECRET requires hosted OIDC configuration".into());
+        }
+        (SocketAddr::from(([127, 0, 0, 1], port)), None, None, None)
     };
     if let Some(parent) = database_path
         .parent()
@@ -208,6 +227,7 @@ pub async fn serve(database_path: PathBuf, port: u16) -> Result<(), Box<dyn std:
         oidc_config,
         api_host,
         web_origin,
+        proxy_secret,
     );
     if loopback_test {
         eprintln!("CodeXPT OIDC loopback test listening on {address}");
@@ -228,6 +248,7 @@ fn validate_hosted_origin(
     config: &OidcConfig,
     api_host: &str,
     web_origin: &str,
+    proxied: bool,
 ) -> Result<(), &'static str> {
     if api_host.is_empty()
         || !api_host
@@ -239,19 +260,56 @@ fn validate_hosted_origin(
     {
         return Err("hosted OIDC requires a valid public host without scheme or path");
     }
-    let origin = format!("https://{api_host}");
-    if web_origin != origin {
+    let public_host = web_origin
+        .strip_prefix("https://")
+        .filter(|host| valid_public_host(host))
+        .ok_or("hosted OIDC requires a public HTTPS browser origin without a path")?;
+    if !proxied && web_origin != format!("https://{api_host}") {
         return Err(
             "hosted beta requires the API host and browser origin to share one HTTPS origin",
         );
     }
-    if config.redirect_uri != format!("{origin}/api/auth/callback") {
-        return Err("OIDC redirect URI must match the hosted API callback exactly");
+    if config.redirect_uri != format!("https://{public_host}/api/auth/callback") {
+        return Err("OIDC redirect URI must match the public browser callback exactly");
     }
-    if config.success_url != origin && config.success_url != format!("{origin}/") {
+    if config.success_url != web_origin && config.success_url != format!("{web_origin}/") {
         return Err("OIDC success URL must return to the hosted browser origin");
     }
     Ok(())
+}
+
+fn valid_public_host(host: &str) -> bool {
+    !host.is_empty()
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.starts_with('-')
+        && !host.ends_with('-')
+        && !host.contains("..")
+}
+
+fn validate_proxy_secret(secret: &str) -> Result<(), &'static str> {
+    if secret.len() < 32
+        || secret.trim() != secret
+        || secret.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err("CODEXPT_PROXY_SECRET must contain at least 32 non-whitespace bytes");
+    }
+    Ok(())
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
+        == 0
 }
 
 fn oidc_loopback_test_mode() -> Result<bool, &'static str> {
@@ -337,7 +395,7 @@ fn router_with_identity(
     identity: Option<IdentityStore>,
     oidc_config: Option<OidcConfig>,
 ) -> Router {
-    router_with_identity_and_origins(database_path, port, identity, oidc_config, None, None)
+    router_with_identity_and_origins(database_path, port, identity, oidc_config, None, None, None)
 }
 
 fn router_with_identity_and_origins(
@@ -347,6 +405,7 @@ fn router_with_identity_and_origins(
     oidc_config: Option<OidcConfig>,
     api_host: Option<String>,
     web_origin: Option<String>,
+    proxy_secret: Option<String>,
 ) -> Router {
     let state = AppState {
         database_path,
@@ -355,6 +414,7 @@ fn router_with_identity_and_origins(
         oidc: oidc_config,
         api_host,
         web_origin: web_origin.clone(),
+        proxy_secret,
     };
     let app = Router::new()
         .route("/api/health", get(health))
@@ -485,6 +545,25 @@ async fn local_request_guard(
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
+    let path = request.uri().path();
+    if let Some(expected_secret) = state.proxy_secret.as_deref() {
+        let supplied_values = request.headers().get_all(PROXY_SECRET_HEADER);
+        let supplied_secret = if supplied_values.iter().count() == 1 {
+            supplied_values
+                .iter()
+                .next()
+                .and_then(|value| value.to_str().ok())
+        } else {
+            None
+        };
+        // Railway's public liveness probe must not reveal application readiness details.
+        let is_public_liveness = request.method() == Method::GET && path == "/api/health";
+        if !is_public_liveness
+            && !matches!(supplied_secret, Some(value) if constant_time_eq(value.as_bytes(), expected_secret.as_bytes()))
+        {
+            return guarded_error(StatusCode::FORBIDDEN, "trusted application proxy required");
+        }
+    }
     let expected_host = state
         .api_host
         .clone()
@@ -535,7 +614,6 @@ async fn local_request_guard(
     }
 
     let mut context = RequestContext::default();
-    let path = request.uri().path();
     let task_api = path.starts_with("/api/tasks");
     let workspace_api = path.starts_with("/api/workspaces/");
     let invite_accept = path == "/api/invites/accept";
@@ -871,13 +949,8 @@ fn apply_security_headers(headers: &mut HeaderMap) {
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
 }
 
-async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mode = if state.oidc.is_some() {
-        "hosted"
-    } else {
-        "local"
-    };
-    Json(serde_json::json!({"status": "ok", "mode": mode}))
+async fn health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "ok"}))
 }
 
 async fn readiness(State(state): State<AppState>) -> Response {
@@ -2607,6 +2680,7 @@ mod tests {
             }),
             api_host: Some("codexpt.example".into()),
             web_origin: Some("https://codexpt.example".into()),
+            proxy_secret: None,
         };
         identity.close_for_test().await;
 
@@ -2638,6 +2712,7 @@ mod tests {
             }),
             api_host: Some("codexpt.example".into()),
             web_origin: Some("https://codexpt.example".into()),
+            proxy_secret: None,
         };
 
         let response = readiness(State(state)).await;
@@ -2658,10 +2733,17 @@ mod tests {
             success_url: "https://codexpt.example/".into(),
         };
         assert!(
-            validate_hosted_origin(&config, "codexpt.example", "https://codexpt.example").is_ok()
+            validate_hosted_origin(&config, "codexpt.example", "https://codexpt.example", false)
+                .is_ok()
         );
         assert!(
-            validate_hosted_origin(&config, "codexpt.example", "https://frontend.example").is_err()
+            validate_hosted_origin(
+                &config,
+                "codexpt.example",
+                "https://frontend.example",
+                false,
+            )
+            .is_err()
         );
 
         let mut wrong_callback = config;
@@ -2670,10 +2752,163 @@ mod tests {
             validate_hosted_origin(
                 &wrong_callback,
                 "codexpt.example",
-                "https://codexpt.example"
+                "https://codexpt.example",
+                false,
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn hosted_oidc_allows_a_separate_frontend_origin_only_behind_the_vercel_proxy() {
+        let config = OidcConfig {
+            issuer: "https://issuer.example".into(),
+            client_id: "client-test".into(),
+            redirect_uri: "https://codexpt.jappi.net.pe/api/auth/callback".into(),
+            success_url: "https://codexpt.jappi.net.pe/".into(),
+        };
+        assert!(
+            validate_hosted_origin(
+                &config,
+                "codexpt-backend.up.railway.app",
+                "https://codexpt.jappi.net.pe",
+                true,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_hosted_origin(
+                &config,
+                "codexpt-backend.up.railway.app",
+                "https://codexpt.jappi.net.pe",
+                false,
+            )
+            .is_err()
+        );
+
+        let mut wrong_callback = config;
+        wrong_callback.redirect_uri =
+            "https://codexpt-backend.up.railway.app/api/auth/callback".into();
+        assert!(
+            validate_hosted_origin(
+                &wrong_callback,
+                "codexpt-backend.up.railway.app",
+                "https://codexpt.jappi.net.pe",
+                true,
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn hosted_proxy_secret_blocks_direct_api_requests_but_allows_only_generic_liveness() {
+        let config = OidcConfig {
+            issuer: "https://issuer.example".into(),
+            client_id: "client-test".into(),
+            redirect_uri: "https://codexpt.jappi.net.pe/api/auth/callback".into(),
+            success_url: "https://codexpt.jappi.net.pe/".into(),
+        };
+        let app = router_with_identity_and_origins(
+            PathBuf::from("unused.sqlite3"),
+            4173,
+            None,
+            Some(config.clone()),
+            Some("codexpt-backend.up.railway.app".into()),
+            Some("https://codexpt.jappi.net.pe".into()),
+            Some("a-long-test-proxy-secret-that-is-not-production".into()),
+        );
+
+        let direct = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/status")
+                    .header(header::HOST, "codexpt-backend.up.railway.app")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(direct.status(), StatusCode::FORBIDDEN);
+
+        let duplicate_credentials = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/status")
+                    .header(header::HOST, "codexpt-backend.up.railway.app")
+                    .header(
+                        PROXY_SECRET_HEADER,
+                        "a-long-test-proxy-secret-that-is-not-production",
+                    )
+                    .header(PROXY_SECRET_HEADER, "attacker-controlled")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicate_credentials.status(), StatusCode::FORBIDDEN);
+
+        let proxied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/status")
+                    .header(header::HOST, "codexpt-backend.up.railway.app")
+                    .header(
+                        PROXY_SECRET_HEADER,
+                        "a-long-test-proxy-secret-that-is-not-production",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(proxied.status(), StatusCode::OK);
+
+        let readiness = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health/ready")
+                    .header(header::HOST, "codexpt-backend.up.railway.app")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(readiness.status(), StatusCode::FORBIDDEN);
+
+        let liveness = router_with_identity_and_origins(
+            PathBuf::from("/tmp/codexpt-test.sqlite3"),
+            4173,
+            None,
+            Some(config),
+            Some("codexpt-backend.up.railway.app".into()),
+            Some("https://codexpt.jappi.net.pe".into()),
+            Some("a-long-test-proxy-secret-that-is-not-production".into()),
+        )
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .header(header::HOST, "codexpt-backend.up.railway.app")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(liveness.status(), StatusCode::OK);
+        let body = to_bytes(liveness.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body, r#"{"status":"ok"}"#);
+    }
+
+    #[test]
+    fn hosted_proxy_secret_requires_entropy_and_compares_without_early_exit() {
+        assert!(validate_proxy_secret("short").is_err());
+        assert!(validate_proxy_secret(" 01234567890123456789012345678901").is_err());
+        assert!(validate_proxy_secret("01234567890123456789012345678901").is_ok());
+        assert!(constant_time_eq(b"same-value", b"same-value"));
+        assert!(!constant_time_eq(b"same-value", b"same-valuf"));
+        assert!(!constant_time_eq(b"short", b"longer"));
     }
 
     #[tokio::test]
@@ -2841,6 +3076,7 @@ mod tests {
             Some(config),
             Some("api.codexpt.example.test".into()),
             Some("https://codexpt.example.test".into()),
+            None,
         );
         let preflight = app
             .clone()

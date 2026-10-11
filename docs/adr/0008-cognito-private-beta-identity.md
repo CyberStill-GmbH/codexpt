@@ -15,7 +15,7 @@ OpenAI's `Sign in with ChatGPT` is not a generic OAuth client registration avail
 
 1. Use **Amazon Cognito User Pools** as the single OIDC provider for the initial private beta. Defer Microsoft Entra External ID until a later product decision; do not add a second provider now.
 2. Configure a dedicated CodeXPT user pool and a **public app client without a client secret**. Allow only the Authorization Code grant, require PKCE S256, and request only `openid profile email`.
-3. Register one exact HTTPS callback at the CodeXPT backend: `https://<approved-host>/api/auth/callback`. The same origin serves the embedded frontend and API. Register only that approved origin as the logout URL.
+3. Register one exact HTTPS callback on the public Vercel origin: `https://<approved-vercel-host>/api/auth/callback`. The browser returns to Vercel and `/api/auth/callback` is proxied to the Railway backend. Register only that public origin as the logout URL; never register the Railway transport hostname as a browser callback.
 4. Keep self-service account creation disabled for the invite-only beta. The operator provisions the first verified identity out of band and runs the explicit CodeXPT `identity bootstrap-owner` operation. New members must satisfy both the provider's authentication and CodeXPT's verified-email invitation.
 5. CodeXPT SQLx membership data remains the sole source of `OWNER`, `EDITOR`, and `VIEWER` permissions. Cognito group and token claims do not grant workspace roles.
 6. Continue to issue CodeXPT's own opaque, server-side browser session. Do not store provider tokens in the CodeXPT session or browser, and do not conflate CodeXPT login with any Codex or ChatGPT agent connection.
@@ -23,7 +23,7 @@ OpenAI's `Sign in with ChatGPT` is not a generic OAuth client registration avail
 
 ## Deployment fit and constraints
 
-The active hosting candidate is one Railway service with an embedded frontend and same-origin Rust API. The production Cognito callback must use the final HTTPS Railway host chosen for the isolated hosted test. The current AWS deployment root also manages an EC2 deployment; it must not be applied merely to create or test the identity provider. A separate, loopback-only Cognito test root is prepared at [`infra/terraform-cognito-test`](../../infra/terraform-cognito-test/README.md); it is not applied and does not register a public callback. No Railway project is currently linked, and no approved hosted callback exists.
+The active hosting candidate is documented in [ADR-0013](0013-vercel-railway-split-hosting.md): Vercel owns the public browser origin and Railway uses a generated backend hostname. The production Cognito callback must use the exact Vercel HTTPS origin. The current AWS deployment root also manages an EC2 deployment; it must not be applied merely to create or test the identity provider. A separate, loopback-only Cognito test root is prepared at [`infra/terraform-cognito-test`](../../infra/terraform-cognito-test/README.md); it is not applied and does not register a public callback. No Railway project is currently linked, and no approved hosted callback exists.
 
 The existing backend uses a public-client code exchange (`client_secret = None`), which matches this decision. This compatibility is architectural only: the controlled local provider test is not evidence that a real Cognito discovery document, token response, verified-email claim, cookie, callback, logout, or deployment works. Those properties must be verified against a dedicated Cognito pool once an isolated environment is authorized.
 
@@ -41,7 +41,7 @@ The existing backend uses a public-client code exchange (`client_secret = None`)
 - The existing OIDC backend can be tested with a public Cognito app client without adding or distributing a client secret.
 - CodeXPT login uses a separate Cognito account. It does not sign the user into their existing Microsoft, ChatGPT, or Codex account.
 - Cognito is a provider choice, not a completed OIDC integration. Live setup, exact callback registration, account provisioning, hosted browser QA, and operational recovery remain open gates.
-- The existing Terraform defaults previously used different API and browser hosts, which violated the backend's same-origin validation. The defaults are aligned in code, but this changes no DNS and does not make the AWS deployment plan active.
+- The hosted backend now distinguishes the Railway transport host from the public Vercel browser origin and requires a proxy secret. This changes no DNS and does not make the AWS deployment plan active.
 
 ## References
 

@@ -4,6 +4,6 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     restoreMocks: true,
-    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**', 'proxy-tests/**'],
   },
 })

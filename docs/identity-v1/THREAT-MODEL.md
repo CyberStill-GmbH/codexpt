@@ -1,6 +1,6 @@
 # Identity v1 threat model (implementation review)
 
-**Status:** design controls are partially implemented and locally tested; this is not a security certification or release approval. **Scope:** OIDC login, browser session, workspace membership/RBAC, review data, and human approvals served from one Railway HTTPS origin by the Rust/Axum service, with the frontend embedded in that service. Local mode remains a separate OS-user trust boundary. Task storage remains rusqlite; a controlled local provider callback test now exists, but neither Cognito nor OpenAI has been tested live and the hosted browser flow is untested. The authorization acceptance plan lists outstanding gates. The active domain plan uses `codexpt.jappi.net.pe` for UI and API paths; it does not use an `api.` subdomain. Do not expose this branch to public traffic yet.
+**Status:** design controls are partially implemented and locally tested; this is not a security certification or release approval. **Scope:** OIDC login, browser session, workspace membership/RBAC, review data, and human approvals with the Vercel frontend/proxy and Railway Rust/Axum backend described by [ADR-0013](../adr/0013-vercel-railway-split-hosting.md). Local mode remains a separate OS-user trust boundary. Task storage remains rusqlite; a controlled local provider callback test now exists, but neither Cognito nor OpenAI has been tested live and the hosted browser flow is untested. The authorization acceptance plan lists outstanding gates. Vercel owns `codexpt.jappi.net.pe`; Railway uses its generated domain for API transport. Do not expose this branch to public traffic yet.
 
 ## Assets
 
@@ -29,6 +29,7 @@
 | Open redirect / SSRF | Attacker supplies callback, issuer discovery URL, JWKS redirect or `return_to` | Configure trusted issuer/callback; exact redirect allowlist; no user-controlled discovery URLs; HTTP client must not follow redirects for OIDC metadata/JWKS; fixed post-login redirect. |
 | JWT confusion/forgery | Accept wrong issuer, client, algorithm, expired token or forged key | Validate signature/JWKS, exact `iss`, audience/client, nonce, time claims and explicit algorithm allowlist with maintained library; test wrong claims/key rollover/expiry. |
 | Session fixation/theft | Preserve pre-login session or steal/replay browser value | Rotate at authentication/privilege changes; 256-bit opaque id; hash at rest; host-only Secure HttpOnly cookie; server-side expiry/revocation; no tokens in JS/logs. |
+| Direct backend access / proxy-secret disclosure | Caller targets the generated Railway domain, injects a fake/repeated internal header, or obtains runtime environment values | Vercel server function drops caller-supplied proxy keys and injects one runtime secret; Rust requires exactly one match in constant time before routes, then still applies session/RBAC/Host/Origin/CSRF. Keep the key out of bundles/logs; rotate Vercel and Railway values together. Railway remains publicly reachable; the shared key is an application gate, not network isolation. |
 | CSRF / browser request forgery | Malicious site triggers a same-origin authenticated mutation | Exact Origin/Host checks, per-session CSRF token header, SameSite=Lax defense in depth, JSON-only mutation; test hostile/null/preview origins. |
 | IDOR / tenant escape | Substitute another workspace/task/decision id | Resolve membership and resource in the same scoped query/service; workspace id included in every child access and mutation; test user A cannot read/change any B resource. |
 | Vertical privilege escalation | Editor changes role or submits approval | Server-side action-role matrix; role changes only by Owner; final approval Owner only; membership changes and approval transact with audit event; test each denied transition. |
@@ -50,7 +51,7 @@
 
 1. No endpoint makes an authorization decision from a client-supplied actor, email, user id, or role.
 2. Every hosted request except login/callback/health is denied without an active server-side session.
-3. Every workspace-owned resource read or write is checked against current workspace membership and action role.
+3. Every hosted API request is behind the Vercel proxy credential and every workspace-owned resource read or write is checked against current workspace membership and action role.
 4. An approval event identifies a verified owner user and causally links the resolved task/decision; an Agent or Editor cannot issue one.
 5. Logout/revocation and role removal take effect at the next request; session expiry is enforced server-side.
 6. OAuth codes, access/refresh/ID tokens, PKCE verifier, cookie value, and CSRF secret never appear in response bodies or logs. Public client IDs are configuration, not secrets. Initial hosted login retains no provider tokens after ID-token verification.
@@ -64,4 +65,4 @@
 - SQLx SQLite/PostgreSQL query/migration parity needs its own tests; `workspace_id` omission is a recurring IDOR risk.
 - A compromised same-origin UI or XSS can perform actions as a logged-in user despite HttpOnly cookies; apply CSP/output encoding, CSRF, and approval confirmation. Same-origin removes credentialed cross-origin CORS but does not remove CSRF risk.
 - Email recovery, invitation delivery, support/admin override, owner loss, and deletion/retention policy remain unresolved; no public registration until specified.
-- Railway same-origin is the active hosted candidate in [ADR-0011](../adr/0011-same-origin-railway-beta.md); it remains unprovisioned. Reassess the threat model and cost before changing topology or exposing public registration.
+- Vercel frontend + Railway API proxy is the active hosted candidate in [ADR-0013](../adr/0013-vercel-railway-split-hosting.md); it remains unprovisioned and unvalidated with real provider behavior. Confirm plan eligibility, cost and all proxy/OIDC gates before public registration.

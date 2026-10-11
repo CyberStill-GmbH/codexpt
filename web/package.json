@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint src",
     "test": "vitest run",
+    "test:proxy": "node --test ./proxy-tests/proxy.test.mjs",
     "test:e2e": "npm run build && node ./e2e/run.mjs",
     "preview": "vite preview"
   },

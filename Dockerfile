@@ -32,4 +32,4 @@ USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/container-entrypoint"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD sh -c 'test -n "$CODEXPT_API_HOST" && curl --fail --silent --show-error -H "Host: $CODEXPT_API_HOST" "http://127.0.0.1:${PORT:-4173}/api/health/ready" >/dev/null || exit 1'
+  CMD sh -c 'test -n "$CODEXPT_API_HOST" && curl --fail --silent --show-error -H "Host: $CODEXPT_API_HOST" "http://127.0.0.1:${PORT:-4173}/api/health" >/dev/null || exit 1'

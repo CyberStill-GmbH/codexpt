@@ -1,5 +1,16 @@
 # Verification strategy
 
+## Vercel/Railway split preparation (2026-10-10)
+
+The Vercel project `codexpt` is configured with project root `web`, Vite framework, `npm run build`, and `dist` output. `codexpt.jappi.net.pe` is attached to Vercel, but `vercel domains verify` reports invalid DNS; it recommends a `codexpt` CNAME to `c47d9204239c3293.vercel-dns-017.com.`. No DNS record has been edited. No CodeXPT Railway project or generated hostname exists, so no hosted proxy/OIDC flow can be exercised.
+
+- `cargo fmt` and `cargo test --locked --all-targets`: passed; 56 tests passed.
+- `npm --prefix web run build`: passed for Vercel's `web` root.
+- `npm --prefix web run test:proxy`: 7 Node tests passed, covering OIDC redirects/cookies, stripping fake client credentials, exact Railway-host match, request/response-size and method/config failures, upstream timeouts, safe upstream errors and JSON 404 for `/api`.
+- `npm --prefix web test`: passed; Vitest reports 6 tests. The Node proxy suite is excluded from Vitest discovery.
+
+These are local checks only. Real Vercel function deployment, Railway transport Host, private secret configuration, Cognito, DNS, and production browser behavior remain unverified.
+
 ## Current release-candidate snapshot (2026-10-10)
 
 The latest local UI and backend changes were verified in the `C:\projects\codexpt` worktree. These checks do not certify live OIDC, hosted authorization, or a public deployment.
@@ -13,7 +24,7 @@ The latest local UI and backend changes were verified in the `C:\projects\codexp
 - Rust readiness tests verify that unavailable identity or task storage returns HTTP 503. Container checks use a synthetic OIDC issuer and identity: they prove local packaging, storage, shutdown, and backup mechanics only, not live OIDC or hosted platform behavior.
 - **Current worktree, 2026-10-10:** Docker built successfully as `codexpt:launch-review`, image ID `sha256:1f7794449e7980a7e4bfda692fc29c6fdb4b85bdb0d0edd4948d0a118bebdf03` (40,966,934 bytes). Running that image with synthetic OIDC settings and temporary `/data` returned HTTP 200 from `/api/health/ready`; the disposable container was removed. This verifies the current entrypoint and hosted-mode startup path, not Cognito, browser login, or durable volume behavior.
 - The earlier note about a failed rebuild due to `index.crates.io` is superseded by the successful current-worktree build above.
-- No Railway service, DNS, certificate, or cloud resource has been created or modified.
+- No Railway service, DNS, or certificate has been created or modified. During this turn, the existing Vercel project configuration was updated to root `web`, framework Vite, build `npm run build`, output `dist`; its domain is attached but DNS is invalid. No deployment was created.
 
 Remaining hosted release gates are tracked in [`deployment/PLAN.md`](deployment/PLAN.md) and [`identity-v1/AUTHORIZATION-TEST-PLAN.md`](identity-v1/AUTHORIZATION-TEST-PLAN.md). Railway CLI is authenticated, but no CodeXPT project exists or is linked; the current browser session is not logged into the Railway dashboard, so billing and usage remain unverified.
 
@@ -27,6 +38,7 @@ cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
 npm --prefix web ci
 npm --prefix web test
+npm --prefix web run test:proxy
 npm --prefix web run build
 npm --prefix web run test:e2e
 ./scripts/smoke.ps1

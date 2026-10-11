@@ -1,0 +1,18 @@
+# Only the Vite app and its configured build inputs belong in the upload.
+.git
+.vercel
+.env*
+/.codexpt
+/.agents
+/.cursor
+/.impeccable
+/design-system
+/docs
+/infra
+/migrations
+/scripts
+/src
+/target
+web/node_modules
+web/dist
+web/test-results
