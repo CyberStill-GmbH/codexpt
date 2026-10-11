@@ -410,7 +410,7 @@ textarea::placeholder, input::placeholder { color: #aaa89e; }
   to { opacity: 1; }
 }
 @keyframes splash-art-arrive { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: scale(1); } }
-@keyframes panda-wink { 0%, 36%, 57%, 100% { opacity: 0; transform: scaleY(0); } 40%, 53% { opacity: 1; transform: scaleY(1); } }
+@keyframes panda-wink { 0%, 35%, 62%, 100% { opacity: 0; transform: scaleY(0); } 39%, 58% { opacity: 1; transform: scaleY(1); } }
 @keyframes dialog-backdrop-arrive { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dialog-arrive { from { opacity: .8; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 760px) {
