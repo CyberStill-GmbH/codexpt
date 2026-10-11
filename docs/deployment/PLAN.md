@@ -1,16 +1,25 @@
 # CodeXPT hosting and deployment plan
 
-**Status (2026-10-11): frontend deployed from Git to
-[codexpt.vercel.app](https://codexpt.vercel.app); the hosted app is not yet
-functional end to end.** The static UI and HTTPS are live, but `/api/health`
-reports that the API proxy is not configured and there is no CodeXPT Railway
-service. The custom alias `codexpt.jappi.net.pe` remains blocked by DNS
-(`SERVFAIL`). AWS SSO is authenticated, but the permitted account has no visible
-Route 53 zone or application resources. The Cloudflare account has no visible
-Workers & Pages project and no `jappi.net.pe` zone. The local SQLite Durable
-Object spike passes its storage tests, but it is not an app or a deployable
-backend. No cloud resource, parent-zone DNS record, or nameserver delegation
-has been changed.
+**Status (2026-10-11): static frontend deployed to
+[codexpt.vercel.app](https://codexpt.vercel.app); backend is not deployed and
+the product is not functional end to end.** Live checks return `503 API proxy
+is not configured` for `/api/health` and `/api/auth/status`; the Vercel project
+has no production environment variables. Static WebP illustrations now return
+`image/webp` from the Vercel hostname. The custom alias
+`codexpt.jappi.net.pe` remains blocked by DNS (`SERVFAIL`/lookup failure).
+
+A Railway project and `codexpt-api` service scaffold now exist from a prior
+deployment attempt, with generated hostname
+`codexpt-api-production.up.railway.app`; the service has no source/image,
+deployment, mounted volume, or running replica. It is not a backend deployment.
+AWS SSO currently authenticates as the QAPAQ-specific
+`QapaqDemoDeploy` role in account `955200662475`; Route 53 has no visible hosted
+zone. Repository identity rules prohibit using QAPAQ pools, clients, credentials,
+users, or data for CodeXPT, and the role is not a dedicated CodeXPT identity.
+The Cloudflare account has no visible Workers & Pages project, Durable Object,
+or `jappi.net.pe` zone. The local SQLite Durable Object spike passes its storage
+tests, but is not a production backend. No parent-zone DNS record or nameserver
+delegation has been changed.
 
 ## Current decision
 
@@ -89,9 +98,9 @@ decision after the complete record set and rollback are ready.
 | Provider | Current observation | Deployment consequence |
 |---|---|---|
 | Cloudflare | Account dashboard is authenticated; no `jappi.net.pe` zone, no Workers & Pages project, and dashboard showed zero Worker requests for Oct 1–11. | Candidate can be tested without disturbing visible Cloudflare projects; custom host still requires verified DNS authority and zone setup. |
-| AWS | SSO works. No visible Route 53 hosted zone, ECS cluster, ECR repository, running EC2 instance, Elastic IP, Lambda function, or ACM certificate was found in the permitted account/region checks. | Do not run the EC2 Terraform root; it violates the US$5 ceiling. |
-| Railway | CLI authenticated; no CodeXPT project/service. Dashboard workspace usage is above the Hobby included credit. | Do not create a service or alter a workspace-wide hard limit until incremental costs and impact on existing projects are resolved. |
-| Vercel | Protected preview exists; static frontend builds, API proxy is unconfigured; custom hostname DNS is invalid. | Do not represent preview as deployed product or enable public access. |
+| AWS | SSO authenticates as QAPAQ's `QapaqDemoDeploy` role in account `955200662475`; no visible Route 53 hosted zone. This is not a dedicated CodeXPT deployment identity. | Do not apply CodeXPT infrastructure with the QAPAQ role or run the EC2 Terraform root; it violates the identity boundary and US$5 ceiling. |
+| Railway | A `codexpt` project and `codexpt-api` service scaffold exist, with generated hostname but no source/image, deployment, volume, or replica. Workspace usage was previously observed above the Hobby included credit. | This scaffold is not a running backend. Do not deploy into or alter workspace-wide limits until incremental costs and impact on existing projects are resolved. |
+| Vercel | Production static frontend is Ready at `codexpt.vercel.app`; images and CSS serve with correct MIME types. `/api/health` and `/api/auth/status` return 503 because no proxy configuration exists; production env list is empty. Custom hostname DNS is invalid. | The static site is live, not the complete product. Do not claim backend or hosted identity readiness. |
 
 Provider status can change. Recheck directly before a new deployment decision.
 
