@@ -27,6 +27,7 @@ describe('CodeXPT dashboard smoke', () => {
 
     expect(screen.getByText('Abriendo el registro de revisiones…')).toBeTruthy()
     expect(screen.getByRole('status').getAttribute('aria-busy')).toBe('true')
+    expect(document.querySelector('.startup-art')?.getAttribute('src')).toBe('/not-found.webp')
     resolveStatus(json({ configured: false }))
     expect(await screen.findByRole('heading', { name: 'El espacio está listo.' })).toBeTruthy()
   })

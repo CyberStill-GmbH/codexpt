@@ -97,6 +97,7 @@ function StartupSplash() {
         <p>Abriendo el registro de revisiones…</p>
       </div>
     </div>
+    <img className="startup-art" src="/not-found.webp" alt="" fetchPriority="high" />
     <div className="startup-rule" aria-hidden="true"><span /></div>
   </main>
 }
