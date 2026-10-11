@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { proxyHandler } from '../api/[...path].js'
 import apiRootHandler from '../api/index.js'
@@ -17,6 +18,17 @@ const configured = {
   CODEXPT_RAILWAY_HOST: 'codexpt-production.up.railway.app',
   CODEXPT_PROXY_SECRET: 'test-secret-0123456789-0123456789-abcdef',
 }
+
+test('Vercel SPA fallback serves app routes without intercepting API functions', () => {
+  const config = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'))
+  const fallback = config.rewrites.find((rewrite) => rewrite.destination === '/index.html' && rewrite.source.includes('(?!api/'))
+  assert.ok(fallback)
+  const source = new RegExp(`^${fallback.source}$`)
+  assert.equal(source.test('/login'), true)
+  assert.equal(source.test('/ruta-profunda'), true)
+  assert.equal(source.test('/api'), false)
+  assert.equal(source.test('/api/auth/status'), false)
+})
 
 test('proxy forwards same-origin OIDC callback without following redirects or losing cookies', async () => {
   let called

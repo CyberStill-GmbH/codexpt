@@ -5,6 +5,6 @@
   "rewrites": [
     { "source": "/login", "destination": "/index.html" },
     { "source": "/invite", "destination": "/index.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api/|api$).*)", "destination": "/index.html" }
   ]
 }
